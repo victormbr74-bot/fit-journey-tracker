@@ -7,6 +7,8 @@ import { UserProvider } from "@/context/UserContext";
 import Index from "./pages/Index";
 import OnboardingPage from "./pages/OnboardingPage";
 import DashboardPage from "./pages/DashboardPage";
+import WorkoutPage from "./pages/WorkoutPage";
+import DietPage from "./pages/DietPage";
 import RunningPage from "./pages/RunningPage";
 import ProfilePage from "./pages/ProfilePage";
 import NotFound from "./pages/NotFound";
@@ -24,6 +26,8 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/onboarding" element={<OnboardingPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/workout" element={<WorkoutPage />} />
+            <Route path="/diet" element={<DietPage />} />
             <Route path="/running" element={<RunningPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
