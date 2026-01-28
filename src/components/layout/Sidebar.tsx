@@ -1,9 +1,11 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, MapPin, User, LogOut, Dumbbell } from 'lucide-react';
+import { LayoutDashboard, MapPin, User, LogOut, Dumbbell, Utensils } from 'lucide-react';
 import { useUser } from '@/context/UserContext';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { path: '/workout', label: 'Treino', icon: Dumbbell },
+  { path: '/diet', label: 'Dieta', icon: Utensils },
   { path: '/running', label: 'Corrida', icon: MapPin },
   { path: '/profile', label: 'Perfil', icon: User },
 ];
