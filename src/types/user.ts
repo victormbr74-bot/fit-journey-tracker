@@ -2,27 +2,62 @@ export interface UserProfile {
   id: string;
   name: string;
   email: string;
+  birthdate: string; // ISO date string
   age: number;
   weight: number;
   height: number;
   goal: 'lose_weight' | 'gain_muscle' | 'maintain' | 'endurance';
+  muscle_groups: string[];
+  training_frequency: number;
   points: number;
-  createdAt: Date;
+  spotify_playlist?: string;
+  youtube_playlist?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface WeightEntry {
+  id?: string;
+  user_id?: string;
   date: Date;
   weight: number;
+  recorded_at?: string;
 }
 
 export interface RunSession {
   id: string;
+  user_id?: string;
   date: Date;
   duration: number; // in seconds
   distance: number; // in km
   avgSpeed: number; // km/h
   route: { lat: number; lng: number }[];
   calories: number;
+  recorded_at?: string;
+}
+
+export interface Challenge {
+  id: string;
+  name: string;
+  description: string;
+  challenge_type: 'daily' | 'weekly';
+  points_awarded: number;
+  points_deducted: number;
+  icon: string;
+  target_value: number;
+  category: string;
+  is_active: boolean;
+}
+
+export interface UserChallengeProgress {
+  id: string;
+  user_id: string;
+  challenge_id: string;
+  current_value: number;
+  is_completed: boolean;
+  completed_at?: string;
+  assigned_date: string;
+  challenge?: Challenge;
 }
 
 export type Goal = {
@@ -36,4 +71,14 @@ export const GOALS: Goal[] = [
   { id: 'gain_muscle', label: 'Ganhar Massa', icon: '💪' },
   { id: 'maintain', label: 'Manter Forma', icon: '⚖️' },
   { id: 'endurance', label: 'Resistência', icon: '🏃' },
+];
+
+export const MUSCLE_GROUPS = [
+  { id: 'chest', label: 'Peito', icon: '💪' },
+  { id: 'back', label: 'Costas', icon: '🔙' },
+  { id: 'legs', label: 'Pernas', icon: '🦵' },
+  { id: 'shoulders', label: 'Ombros', icon: '🏋️' },
+  { id: 'arms', label: 'Braços', icon: '💪' },
+  { id: 'core', label: 'Abdômen', icon: '🏆' },
+  { id: 'glutes', label: 'Glúteos', icon: '🍑' },
 ];

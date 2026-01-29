@@ -65,12 +65,15 @@ export function UserProvider({ children }: { children: ReactNode }) {
       id: crypto.randomUUID(),
       name,
       email,
+      birthdate: '',
       age: 0,
       weight: 0,
       height: 0,
       goal: 'maintain',
+      muscle_groups: [],
+      training_frequency: 3,
       points: 0,
-      createdAt: new Date(),
+      created_at: new Date().toISOString(),
     };
     setUser(newUser);
     localStorage.setItem('fittrack_user', JSON.stringify(newUser));

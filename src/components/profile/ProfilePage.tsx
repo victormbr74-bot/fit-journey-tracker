@@ -1,15 +1,32 @@
-import { useUser } from '@/context/UserContext';
-import { GOALS } from '@/types/user';
-import { User, Mail, Calendar, Ruler, Scale, Target, Trophy, TrendingUp } from 'lucide-react';
-import { format } from 'date-fns';
+import { useProfile } from '@/hooks/useProfile';
+import { useAuth } from '@/hooks/useAuth';
+import { GOALS, MUSCLE_GROUPS } from '@/types/user';
+import { User, Calendar, Ruler, Scale, Target, Trophy, TrendingUp, Music, Edit, Dumbbell, Clock } from 'lucide-react';
+import { format, differenceInYears } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { Skeleton } from '@/components/ui/skeleton';
+import { MusicPlayer } from '@/components/workout/MusicPlayer';
+import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
 
 export function ProfilePage() {
-  const { user, runSessions } = useUser();
+  const { profile, runSessions, loading } = useProfile();
+  const { signOut } = useAuth();
+  const navigate = useNavigate();
 
-  if (!user) return null;
+  if (loading) {
+    return (
+      <div className="pb-24 md:pb-8 space-y-6">
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-48 w-full" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
+  }
 
-  const goalInfo = GOALS.find(g => g.id === user.goal);
+  if (!profile) return null;
+
+  const goalInfo = GOALS.find(g => g.id === profile.goal);
   const totalDistance = runSessions.reduce((acc, run) => acc + run.distance, 0);
   const totalTime = runSessions.reduce((acc, run) => acc + run.duration, 0);
 
@@ -20,6 +37,16 @@ export function ProfilePage() {
       return `${hours}h ${minutes}min`;
     }
     return `${minutes}min`;
+  };
+
+  const selectedMuscleLabels = profile.muscle_groups
+    ?.map(id => MUSCLE_GROUPS.find(m => m.id === id)?.label)
+    .filter(Boolean)
+    .join(', ') || 'Não definido';
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate('/');
   };
 
   return (
@@ -37,15 +64,15 @@ export function ProfilePage() {
         <div className="flex items-center gap-4 mb-6">
           <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-success flex items-center justify-center">
             <span className="text-3xl font-bold text-primary-foreground">
-              {user.name.charAt(0).toUpperCase()}
+              {profile.name.charAt(0).toUpperCase()}
             </span>
           </div>
           <div>
-            <h2 className="text-xl font-bold">{user.name}</h2>
-            <p className="text-muted-foreground">{user.email}</p>
+            <h2 className="text-xl font-bold">{profile.name}</h2>
+            <p className="text-muted-foreground">{profile.email}</p>
             <div className="flex items-center gap-2 mt-1">
               <Trophy className="w-4 h-4 text-primary" />
-              <span className="text-sm text-primary font-medium">{user.points} pontos</span>
+              <span className="text-sm text-primary font-medium">{profile.points} pontos</span>
             </div>
           </div>
         </div>
@@ -55,21 +82,21 @@ export function ProfilePage() {
             <Calendar className="w-5 h-5 text-info" />
             <div>
               <p className="text-xs text-muted-foreground">Idade</p>
-              <p className="font-medium">{user.age} anos</p>
+              <p className="font-medium">{profile.age} anos</p>
             </div>
           </div>
           <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg">
             <Ruler className="w-5 h-5 text-primary" />
             <div>
               <p className="text-xs text-muted-foreground">Altura</p>
-              <p className="font-medium">{user.height} cm</p>
+              <p className="font-medium">{profile.height} cm</p>
             </div>
           </div>
           <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg">
             <Scale className="w-5 h-5 text-success" />
             <div>
               <p className="text-xs text-muted-foreground">Peso</p>
-              <p className="font-medium">{user.weight} kg</p>
+              <p className="font-medium">{profile.weight} kg</p>
             </div>
           </div>
           <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg">
@@ -77,6 +104,30 @@ export function ProfilePage() {
             <div>
               <p className="text-xs text-muted-foreground">Objetivo</p>
               <p className="font-medium">{goalInfo?.icon} {goalInfo?.label}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Training Preferences */}
+      <div className="glass-card p-6 mb-6">
+        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <Dumbbell className="w-5 h-5 text-primary" />
+          Preferências de Treino
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg">
+            <Dumbbell className="w-5 h-5 text-primary" />
+            <div>
+              <p className="text-xs text-muted-foreground">Grupos Musculares</p>
+              <p className="font-medium text-sm">{selectedMuscleLabels}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg">
+            <Clock className="w-5 h-5 text-success" />
+            <div>
+              <p className="text-xs text-muted-foreground">Frequência Semanal</p>
+              <p className="font-medium">{profile.training_frequency}x por semana</p>
             </div>
           </div>
         </div>
@@ -104,11 +155,19 @@ export function ProfilePage() {
         </div>
       </div>
 
-      {/* Member since */}
-      <div className="text-center text-sm text-muted-foreground">
-        <p>
-          Membro desde {format(new Date(user.createdAt), "MMMM 'de' yyyy", { locale: ptBR })}
+      {/* Music Player */}
+      <div className="mb-6">
+        <MusicPlayer />
+      </div>
+
+      {/* Member since & Logout */}
+      <div className="text-center space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Membro desde {format(new Date(profile.created_at || new Date()), "MMMM 'de' yyyy", { locale: ptBR })}
         </p>
+        <Button variant="outline" onClick={handleLogout}>
+          Sair da conta
+        </Button>
       </div>
     </div>
   );

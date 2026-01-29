@@ -2,37 +2,70 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useUser } from '@/context/UserContext';
-import { GOALS, Goal } from '@/types/user';
-import { ArrowRight, ArrowLeft, Check, Ruler, Weight, Calendar, Target } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/hooks/useProfile';
+import { GOALS, MUSCLE_GROUPS, Goal } from '@/types/user';
+import { ArrowRight, ArrowLeft, Check, Ruler, Weight, Calendar, Target, Dumbbell, Clock } from 'lucide-react';
+import { toast } from 'sonner';
 
-type Step = 'age' | 'weight' | 'height' | 'goal';
+type Step = 'birthdate' | 'weight' | 'height' | 'goal' | 'muscles' | 'frequency';
 
-const steps: Step[] = ['age', 'weight', 'height', 'goal'];
+const steps: Step[] = ['birthdate', 'weight', 'height', 'goal', 'muscles', 'frequency'];
 
 export function OnboardingFlow() {
   const [currentStep, setCurrentStep] = useState(0);
-  const [age, setAge] = useState('');
+  const [birthdate, setBirthdate] = useState('');
   const [weight, setWeight] = useState('');
   const [height, setHeight] = useState('');
   const [goal, setGoal] = useState<Goal['id'] | null>(null);
+  const [selectedMuscles, setSelectedMuscles] = useState<string[]>([]);
+  const [frequency, setFrequency] = useState(3);
+  const [loading, setLoading] = useState(false);
   
-  const { completeOnboarding, user } = useUser();
+  const { user } = useAuth();
+  const { createProfile } = useProfile();
   const navigate = useNavigate();
 
-  const handleNext = () => {
+  const calculateAge = (dateString: string): number => {
+    const today = new Date();
+    const birth = new Date(dateString);
+    let age = today.getFullYear() - birth.getFullYear();
+    const monthDiff = today.getMonth() - birth.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+      age--;
+    }
+    return age;
+  };
+
+  const handleNext = async () => {
     if (currentStep < steps.length - 1) {
       setCurrentStep(currentStep + 1);
     } else {
       // Complete onboarding
-      if (goal) {
-        completeOnboarding({
-          age: parseInt(age),
+      if (goal && user) {
+        setLoading(true);
+        const age = calculateAge(birthdate);
+        
+        const { error } = await createProfile({
+          name: user.user_metadata?.name || user.email?.split('@')[0] || 'Usuário',
+          email: user.email || '',
+          birthdate,
+          age,
           weight: parseFloat(weight),
           height: parseFloat(height),
           goal,
+          muscle_groups: selectedMuscles,
+          training_frequency: frequency,
         });
-        navigate('/dashboard');
+
+        if (error) {
+          toast.error('Erro ao salvar perfil. Tente novamente.');
+          console.error(error);
+        } else {
+          toast.success('Perfil criado com sucesso! 🎉');
+          navigate('/dashboard');
+        }
+        setLoading(false);
       }
     }
   };
@@ -43,16 +76,30 @@ export function OnboardingFlow() {
     }
   };
 
+  const toggleMuscle = (muscleId: string) => {
+    setSelectedMuscles(prev => 
+      prev.includes(muscleId) 
+        ? prev.filter(m => m !== muscleId)
+        : [...prev, muscleId]
+    );
+  };
+
   const canProceed = () => {
     switch (steps[currentStep]) {
-      case 'age':
-        return age && parseInt(age) > 0 && parseInt(age) < 120;
+      case 'birthdate':
+        if (!birthdate) return false;
+        const age = calculateAge(birthdate);
+        return age >= 10 && age <= 120;
       case 'weight':
         return weight && parseFloat(weight) > 0;
       case 'height':
         return height && parseFloat(height) > 0;
       case 'goal':
         return goal !== null;
+      case 'muscles':
+        return selectedMuscles.length > 0;
+      case 'frequency':
+        return frequency >= 1 && frequency <= 7;
       default:
         return false;
     }
@@ -60,9 +107,9 @@ export function OnboardingFlow() {
 
   const renderStep = () => {
     const stepConfig = {
-      age: {
+      birthdate: {
         icon: Calendar,
-        title: 'Qual sua idade?',
+        title: 'Qual sua data de nascimento?',
         subtitle: 'Isso nos ajuda a personalizar seus treinos',
       },
       weight: {
@@ -80,6 +127,16 @@ export function OnboardingFlow() {
         title: 'Qual seu objetivo?',
         subtitle: 'Escolha o que mais combina com você',
       },
+      muscles: {
+        icon: Dumbbell,
+        title: 'Quais grupos musculares deseja treinar?',
+        subtitle: 'Selecione todos os que desejar',
+      },
+      frequency: {
+        icon: Clock,
+        title: 'Quantas vezes por semana você treina?',
+        subtitle: 'Selecione a frequência ideal',
+      },
     };
 
     const config = stepConfig[steps[currentStep]];
@@ -95,15 +152,13 @@ export function OnboardingFlow() {
           <p className="text-muted-foreground text-center mt-2">{config.subtitle}</p>
         </div>
 
-        {steps[currentStep] === 'age' && (
+        {steps[currentStep] === 'birthdate' && (
           <Input
-            type="number"
-            placeholder="Sua idade"
-            value={age}
-            onChange={(e) => setAge(e.target.value)}
-            className="text-center text-2xl h-16"
-            min="1"
-            max="120"
+            type="date"
+            value={birthdate}
+            onChange={(e) => setBirthdate(e.target.value)}
+            className="text-center text-xl h-16"
+            max={new Date().toISOString().split('T')[0]}
           />
         )}
 
@@ -162,6 +217,56 @@ export function OnboardingFlow() {
             ))}
           </div>
         )}
+
+        {steps[currentStep] === 'muscles' && (
+          <div className="grid grid-cols-2 gap-3">
+            {MUSCLE_GROUPS.map((muscle) => (
+              <button
+                key={muscle.id}
+                type="button"
+                onClick={() => toggleMuscle(muscle.id)}
+                className={`p-4 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-2 ${
+                  selectedMuscles.includes(muscle.id)
+                    ? 'border-primary bg-primary/10'
+                    : 'border-border bg-secondary/30 hover:border-primary/50'
+                }`}
+              >
+                <span className="text-2xl">{muscle.icon}</span>
+                <span className="font-medium text-sm">{muscle.label}</span>
+                {selectedMuscles.includes(muscle.id) && (
+                  <Check className="w-5 h-5 text-primary" />
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {steps[currentStep] === 'frequency' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-7 gap-2">
+              {[1, 2, 3, 4, 5, 6, 7].map((day) => (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => setFrequency(day)}
+                  className={`p-4 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-1 ${
+                    frequency === day
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border bg-secondary/30 hover:border-primary/50'
+                  }`}
+                >
+                  <span className="text-xl font-bold">{day}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {day === 1 ? 'vez' : 'vezes'}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="text-center text-muted-foreground">
+              {frequency} {frequency === 1 ? 'dia' : 'dias'} por semana
+            </p>
+          </div>
+        )}
       </div>
     );
   };
@@ -195,7 +300,7 @@ export function OnboardingFlow() {
         {/* Welcome message */}
         {currentStep === 0 && user && (
           <p className="text-center text-lg mb-4 fade-in">
-            Olá, <span className="text-primary font-semibold">{user.name}</span>! 👋
+            Olá, <span className="text-primary font-semibold">{user.user_metadata?.name || user.email?.split('@')[0]}</span>! 👋
           </p>
         )}
 
@@ -211,6 +316,7 @@ export function OnboardingFlow() {
                 size="lg"
                 onClick={handleBack}
                 className="flex-1"
+                disabled={loading}
               >
                 <ArrowLeft className="w-5 h-5" />
                 Voltar
@@ -221,10 +327,10 @@ export function OnboardingFlow() {
               variant="energy"
               size="lg"
               onClick={handleNext}
-              disabled={!canProceed()}
+              disabled={!canProceed() || loading}
               className="flex-1"
             >
-              {currentStep === steps.length - 1 ? 'Começar' : 'Próximo'}
+              {loading ? 'Salvando...' : currentStep === steps.length - 1 ? 'Começar' : 'Próximo'}
               <ArrowRight className="w-5 h-5" />
             </Button>
           </div>

@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DietPlan, Meal } from '@/types/workout';
-import { useUser } from '@/context/UserContext';
+import { useProfile } from '@/hooks/useProfile';
 import { generateDietPlan } from '@/lib/dietGenerator';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
 import { 
   Utensils, 
   RotateCcw, 
@@ -47,7 +48,7 @@ function MacroBar({ label, value, max, color, icon: Icon }: {
 
 function MealCard({ meal, isExpanded, onToggle }: { meal: Meal; isExpanded: boolean; onToggle: () => void }) {
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden glass-card">
       <button 
         onClick={onToggle}
         className="w-full text-left"
@@ -117,17 +118,22 @@ function MealCard({ meal, isExpanded, onToggle }: { meal: Meal; isExpanded: bool
 }
 
 export function DietPlanView() {
-  const { user } = useUser();
+  const { profile, loading } = useProfile();
   const [plan, setPlan] = useState<DietPlan | null>(null);
   const [expandedMeal, setExpandedMeal] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
   const handleGenerate = () => {
-    if (!user) return;
+    if (!profile) return;
     setIsGenerating(true);
     
     setTimeout(() => {
-      const newPlan = generateDietPlan(user);
+      const newPlan = generateDietPlan({
+        weight: profile.weight,
+        height: profile.height,
+        age: profile.age,
+        goal: profile.goal,
+      });
       setPlan(newPlan);
       setExpandedMeal(newPlan.meals[0]?.id || null);
       setIsGenerating(false);
@@ -139,18 +145,28 @@ export function DietPlanView() {
     handleGenerate();
   };
 
-  if (!user) return null;
+  if (loading) {
+    return (
+      <div className="pb-24 md:pb-8 space-y-6">
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-48 w-full" />
+        <Skeleton className="h-48 w-full" />
+      </div>
+    );
+  }
+
+  if (!profile) return null;
 
   if (!plan) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 px-4">
+      <div className="flex flex-col items-center justify-center py-12 px-4 pb-24 md:pb-8">
         <div className="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center mb-6">
           <Utensils className="w-12 h-12 text-primary" />
         </div>
         <h2 className="text-2xl font-bold mb-2 text-center">Dieta Personalizada</h2>
         <p className="text-muted-foreground text-center mb-6 max-w-md">
-          Gere um plano alimentar baseado no seu perfil, peso ({user.weight}kg), 
-          altura ({user.height}cm) e objetivo
+          Gere um plano alimentar baseado no seu perfil, peso ({profile.weight}kg), 
+          altura ({profile.height}cm) e objetivo
         </p>
         <Button 
           variant="energy" 
@@ -186,29 +202,29 @@ export function DietPlanView() {
 
       {/* Calorie Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="p-4">
+        <Card className="p-4 glass-card">
           <p className="text-sm text-muted-foreground">TMB</p>
           <p className="text-xl font-bold">{plan.bmr} kcal</p>
         </Card>
-        <Card className="p-4">
+        <Card className="p-4 glass-card">
           <p className="text-sm text-muted-foreground">TDEE</p>
           <p className="text-xl font-bold">{plan.tdee} kcal</p>
         </Card>
-        <Card className="p-4">
+        <Card className="p-4 glass-card">
           <p className="text-sm text-muted-foreground">{deficitLabel}</p>
           <div className="flex items-center gap-2">
             <DeficitIcon className={`w-5 h-5 ${deficitColor}`} />
             <p className="text-xl font-bold">{Math.abs(plan.deficit)} kcal</p>
           </div>
         </Card>
-        <Card className="p-4 bg-primary/5 border-primary/20">
+        <Card className="p-4 glass-card bg-primary/5 border-primary/20">
           <p className="text-sm text-muted-foreground">Meta Diária</p>
           <p className="text-xl font-bold text-primary">{plan.dailyCalories} kcal</p>
         </Card>
       </div>
 
       {/* Macros */}
-      <Card className="p-4">
+      <Card className="p-4 glass-card">
         <CardHeader className="px-0 pt-0">
           <CardTitle className="text-lg">Macronutrientes</CardTitle>
         </CardHeader>
@@ -239,7 +255,10 @@ export function DietPlanView() {
 
       {/* Meals */}
       <div>
-        <h2 className="text-lg font-semibold mb-3">Refeições</h2>
+        <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+          <Utensils className="w-5 h-5 text-primary" />
+          Refeições
+        </h2>
         <div className="space-y-3">
           {plan.meals.map((meal) => (
             <MealCard 
