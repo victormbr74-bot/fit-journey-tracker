@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useProfile } from '@/hooks/useProfile';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,12 +8,42 @@ import { cn } from '@/lib/utils';
 
 export function ChallengesSection() {
   const { challenges, userChallenges, assignDailyChallenges, completeChallenge, profile } = useProfile();
+  const [lastAssignmentDay, setLastAssignmentDay] = useState('');
 
   useEffect(() => {
-    if (challenges.length > 0) {
-      assignDailyChallenges();
+    if (challenges.length === 0) {
+      return;
     }
-  }, [challenges.length]);
+
+    const today = new Date().toISOString().split('T')[0];
+    const alreadyAssignedToday = userChallenges.some(
+      (progress) => progress.assigned_date === today
+    );
+
+    if (alreadyAssignedToday) {
+      if (lastAssignmentDay !== today) {
+        setLastAssignmentDay(today);
+      }
+      return;
+    }
+
+    if (lastAssignmentDay === today) {
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      await assignDailyChallenges();
+      if (!cancelled) {
+        setLastAssignmentDay(today);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assignDailyChallenges, challenges.length, lastAssignmentDay, userChallenges]);
 
   const dailyChallenges = userChallenges.filter(uc => uc.challenge?.challenge_type === 'daily');
   const weeklyChallenges = userChallenges.filter(uc => uc.challenge?.challenge_type === 'weekly');

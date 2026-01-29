@@ -308,36 +308,50 @@ export function useProfile() {
     }
   };
 
-  const assignDailyChallenges = async () => {
+  const assignDailyChallenges = useCallback(async () => {
     if (!user || challenges.length === 0) return;
 
     const today = new Date().toISOString().split('T')[0];
     const dailyChallenges = challenges.filter(c => c.challenge_type === 'daily');
 
-    for (const challenge of dailyChallenges) {
-      const existingChallenge = userChallenges.find(
-        uc => uc.challenge_id === challenge.id && uc.assigned_date === today
+    try {
+      const { data: existing, error } = await supabase
+        .from('user_challenge_progress')
+        .select('challenge_id')
+        .eq('user_id', user.id)
+        .eq('assigned_date', today);
+
+      if (error) throw error;
+
+      const assignedIds = new Set<string>(
+        (existing || []).map((item) => item.challenge_id)
       );
 
-      if (!existingChallenge) {
-        try {
-          await supabase
-            .from('user_challenge_progress')
-            .insert({
-              user_id: user.id,
-              challenge_id: challenge.id,
-              assigned_date: today,
-              current_value: 0,
-              is_completed: false,
-            });
-        } catch (error) {
-          console.error('Error assigning challenge:', error);
-        }
-      }
-    }
+      const challengesToAssign = dailyChallenges.filter(
+        (challenge) => !assignedIds.has(challenge.id)
+      );
 
-    await fetchUserChallenges();
-  };
+      if (challengesToAssign.length === 0) {
+        return;
+      }
+
+      await supabase
+        .from('user_challenge_progress')
+        .insert(
+          challengesToAssign.map((challenge) => ({
+            user_id: user.id,
+            challenge_id: challenge.id,
+            assigned_date: today,
+            current_value: 0,
+            is_completed: false,
+          }))
+        );
+    } catch (error) {
+      console.error('Error assigning challenge:', error);
+    } finally {
+      await fetchUserChallenges();
+    }
+  }, [user, challenges, fetchUserChallenges]);
 
   const completeChallenge = async (challengeProgressId: string) => {
     if (!user) return { error: new Error('Not authenticated') };
