@@ -1,5 +1,11 @@
 import { DietPlan, Meal, MealItem } from '@/types/workout';
-import { UserProfile } from '@/types/user';
+
+interface UserForDiet {
+  weight: number;
+  height: number;
+  age: number;
+  goal: 'lose_weight' | 'gain_muscle' | 'maintain' | 'endurance';
+}
 
 // Calculate BMR using Mifflin-St Jeor Equation
 function calculateBMR(weight: number, height: number, age: number, isMale: boolean = true): number {
@@ -82,7 +88,7 @@ function createMeal(name: string, time: string, items: MealItem[]): Meal {
   };
 }
 
-export function generateDietPlan(user: UserProfile): DietPlan {
+export function generateDietPlan(user: UserForDiet): DietPlan {
   const bmr = calculateBMR(user.weight, user.height, user.age);
   const tdee = calculateTDEE(bmr);
   

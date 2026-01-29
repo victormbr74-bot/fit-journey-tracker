@@ -1,5 +1,9 @@
 import { WorkoutPlan, WorkoutDay, Exercise } from '@/types/workout';
-import { UserProfile } from '@/types/user';
+
+interface UserForWorkout {
+  name: string;
+  goal: 'lose_weight' | 'gain_muscle' | 'maintain' | 'endurance';
+}
 
 const exerciseDatabase: Record<string, Exercise[]> = {
   chest: [
@@ -261,7 +265,7 @@ function generateEndurancePlan(): WorkoutDay[] {
   ];
 }
 
-export function generateWorkoutPlan(user: UserProfile): WorkoutPlan {
+export function generateWorkoutPlan(user: UserForWorkout): WorkoutPlan {
   let days: WorkoutDay[];
   let name: string;
   let description: string;
