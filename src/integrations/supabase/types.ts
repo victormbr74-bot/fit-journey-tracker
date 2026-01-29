@@ -14,13 +14,206 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      challenges: {
+        Row: {
+          category: string | null
+          challenge_type: string
+          created_at: string | null
+          description: string | null
+          icon: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          points_awarded: number | null
+          points_deducted: number | null
+          target_value: number | null
+        }
+        Insert: {
+          category?: string | null
+          challenge_type: string
+          created_at?: string | null
+          description?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          points_awarded?: number | null
+          points_deducted?: number | null
+          target_value?: number | null
+        }
+        Update: {
+          category?: string | null
+          challenge_type?: string
+          created_at?: string | null
+          description?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          points_awarded?: number | null
+          points_deducted?: number | null
+          target_value?: number | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          age: number | null
+          birthdate: string | null
+          created_at: string | null
+          email: string
+          goal: string | null
+          height: number | null
+          id: string
+          muscle_groups: string[] | null
+          name: string
+          points: number | null
+          spotify_playlist: string | null
+          training_frequency: number | null
+          updated_at: string | null
+          weight: number | null
+          youtube_playlist: string | null
+        }
+        Insert: {
+          age?: number | null
+          birthdate?: string | null
+          created_at?: string | null
+          email: string
+          goal?: string | null
+          height?: number | null
+          id: string
+          muscle_groups?: string[] | null
+          name: string
+          points?: number | null
+          spotify_playlist?: string | null
+          training_frequency?: number | null
+          updated_at?: string | null
+          weight?: number | null
+          youtube_playlist?: string | null
+        }
+        Update: {
+          age?: number | null
+          birthdate?: string | null
+          created_at?: string | null
+          email?: string
+          goal?: string | null
+          height?: number | null
+          id?: string
+          muscle_groups?: string[] | null
+          name?: string
+          points?: number | null
+          spotify_playlist?: string | null
+          training_frequency?: number | null
+          updated_at?: string | null
+          weight?: number | null
+          youtube_playlist?: string | null
+        }
+        Relationships: []
+      }
+      run_sessions: {
+        Row: {
+          avg_speed: number | null
+          calories: number | null
+          distance: number
+          duration: number
+          id: string
+          recorded_at: string | null
+          route: Json | null
+          user_id: string
+        }
+        Insert: {
+          avg_speed?: number | null
+          calories?: number | null
+          distance: number
+          duration: number
+          id?: string
+          recorded_at?: string | null
+          route?: Json | null
+          user_id: string
+        }
+        Update: {
+          avg_speed?: number | null
+          calories?: number | null
+          distance?: number
+          duration?: number
+          id?: string
+          recorded_at?: string | null
+          route?: Json | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_challenge_progress: {
+        Row: {
+          assigned_date: string
+          challenge_id: string
+          completed_at: string | null
+          created_at: string | null
+          current_value: number | null
+          id: string
+          is_completed: boolean | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          assigned_date?: string
+          challenge_id: string
+          completed_at?: string | null
+          created_at?: string | null
+          current_value?: number | null
+          id?: string
+          is_completed?: boolean | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          assigned_date?: string
+          challenge_id?: string
+          completed_at?: string | null
+          created_at?: string | null
+          current_value?: number | null
+          id?: string
+          is_completed?: boolean | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_challenge_progress_challenge_id_fkey"
+            columns: ["challenge_id"]
+            isOneToOne: false
+            referencedRelation: "challenges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      weight_history: {
+        Row: {
+          id: string
+          recorded_at: string | null
+          user_id: string
+          weight: number
+        }
+        Insert: {
+          id?: string
+          recorded_at?: string | null
+          user_id: string
+          weight: number
+        }
+        Update: {
+          id?: string
+          recorded_at?: string | null
+          user_id?: string
+          weight?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      is_own_profile: { Args: { profile_id: string }; Returns: boolean }
     }
     Enums: {
       [_ in never]: never
