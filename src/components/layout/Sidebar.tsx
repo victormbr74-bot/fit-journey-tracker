@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, MapPin, User, LogOut, Dumbbell, Utensils } from 'lucide-react';
-import { useUser } from '@/context/UserContext';
+import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/hooks/useProfile';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -13,10 +14,11 @@ const navItems = [
 export function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { logout, user } = useUser();
+  const { signOut, user } = useAuth();
+  const { profile } = useProfile();
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await signOut();
     navigate('/');
   };
 
@@ -31,10 +33,14 @@ export function Sidebar() {
       </div>
 
       {/* User Info */}
-      {user && (
+      {(profile || user) && (
         <div className="glass-card p-3 mb-6">
-          <p className="font-medium truncate">{user.name}</p>
-          <p className="text-sm text-muted-foreground truncate">{user.email}</p>
+          <p className="font-medium truncate">
+            {profile?.name || user?.name || user?.email?.split('@')[0]}
+          </p>
+          <p className="text-sm text-muted-foreground truncate">
+            {profile?.email || user?.email}
+          </p>
         </div>
       )}
 

@@ -47,7 +47,7 @@ export function OnboardingFlow() {
         const age = calculateAge(birthdate);
         
         const { error } = await createProfile({
-          name: user.user_metadata?.name || user.email?.split('@')[0] || 'Usuário',
+          name: user.name || user.email?.split('@')[0] || 'Usuário',
           email: user.email || '',
           birthdate,
           age,
@@ -300,7 +300,7 @@ export function OnboardingFlow() {
         {/* Welcome message */}
         {currentStep === 0 && user && (
           <p className="text-center text-lg mb-4 fade-in">
-            Olá, <span className="text-primary font-semibold">{user.user_metadata?.name || user.email?.split('@')[0]}</span>! 👋
+            Olá, <span className="text-primary font-semibold">{user.name || user.email?.split('@')[0]}</span>! 👋
           </p>
         )}
 

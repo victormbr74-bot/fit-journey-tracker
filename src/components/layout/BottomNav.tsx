@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, MapPin, User, LogOut, Dumbbell, Utensils } from 'lucide-react';
-import { useUser } from '@/context/UserContext';
+import { useAuth } from '@/hooks/useAuth';
 
 const navItems = [
   { path: '/dashboard', label: 'Home', icon: LayoutDashboard },
@@ -13,10 +13,10 @@ const navItems = [
 export function BottomNav() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { logout } = useUser();
+  const { signOut } = useAuth();
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await signOut();
     navigate('/');
   };
 
