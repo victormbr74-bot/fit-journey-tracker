@@ -1,13 +1,14 @@
 import { useProfile } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
 import { GOALS, MUSCLE_GROUPS } from '@/types/user';
-import { User, Calendar, Ruler, Scale, Target, Trophy, TrendingUp, Music, Edit, Dumbbell, Clock } from 'lucide-react';
-import { format, differenceInYears } from 'date-fns';
+import { Calendar, Ruler, Scale, Target, Trophy, TrendingUp, Dumbbell, Clock } from 'lucide-react';
+import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Skeleton } from '@/components/ui/skeleton';
 import { MusicPlayer } from '@/components/workout/MusicPlayer';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
+import { EditProfileModal } from './EditProfileModal';
 
 export function ProfilePage() {
   const { profile, runSessions, loading } = useProfile();
@@ -61,20 +62,23 @@ export function ProfilePage() {
 
       {/* Profile Card */}
       <div className="glass-card p-6 mb-6">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-success flex items-center justify-center">
-            <span className="text-3xl font-bold text-primary-foreground">
-              {profile.name.charAt(0).toUpperCase()}
-            </span>
-          </div>
-          <div>
-            <h2 className="text-xl font-bold">{profile.name}</h2>
-            <p className="text-muted-foreground">{profile.email}</p>
-            <div className="flex items-center gap-2 mt-1">
-              <Trophy className="w-4 h-4 text-primary" />
-              <span className="text-sm text-primary font-medium">{profile.points} pontos</span>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-4">
+            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-success flex items-center justify-center">
+              <span className="text-3xl font-bold text-primary-foreground">
+                {profile.name.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div>
+              <h2 className="text-xl font-bold">{profile.name}</h2>
+              <p className="text-muted-foreground">{profile.email}</p>
+              <div className="flex items-center gap-2 mt-1">
+                <Trophy className="w-4 h-4 text-primary" />
+                <span className="text-sm text-primary font-medium">{profile.points} pontos</span>
+              </div>
             </div>
           </div>
+          <EditProfileModal />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
