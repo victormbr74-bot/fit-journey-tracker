@@ -28,7 +28,13 @@ export function AuthForm() {
       if (isLogin) {
         const { error } = await signIn(email, password);
         if (error) {
-          setError('Email ou senha incorretos');
+          if (error.message.includes('Invalid login credentials')) {
+            setError('Email ou senha incorretos');
+          } else if (error.message.includes('Email not confirmed')) {
+            setError('Por favor, confirme seu email antes de entrar');
+          } else {
+            setError('Email ou senha incorretos');
+          }
         } else {
           toast.success('Bem-vindo de volta! 💪');
           navigate('/dashboard');
@@ -39,12 +45,17 @@ export function AuthForm() {
           setLoading(false);
           return;
         }
-        const { error } = await signUp(email, password, name);
+        const { data, error } = await signUp(email, password, name);
         if (error) {
-          setError('Erro ao criar conta: ' + error.message);
-        } else {
-          toast.success('Conta criada! Vamos configurar seu perfil.');
-          navigate('/onboarding');
+          if (error.message.includes('already registered')) {
+            setError('Este email já está cadastrado');
+          } else {
+            setError('Erro ao criar conta: ' + error.message);
+          }
+        } else if (data) {
+          toast.success('Conta criada! Verifique seu email para confirmar.');
+          setIsLogin(true);
+          setError('');
         }
       }
     } catch (err) {

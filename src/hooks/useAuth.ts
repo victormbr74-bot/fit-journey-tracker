@@ -1,55 +1,20 @@
 import { useState, useEffect, useCallback } from 'react';
-import { User } from '@/types/user';
+import { supabase } from '@/integrations/supabase/client';
+import { User as SupabaseUser } from '@supabase/supabase-js';
 
-const USERS_STORAGE_KEY = 'fittrack_users';
-const SESSION_STORAGE_KEY = 'fittrack_session';
-
-type StoredUser = {
-  uid: string;
+export type User = {
+  id: string;
   email: string;
-  password: string;
   name: string;
 };
 
-const createId = () => {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID();
-  }
-  return Math.random().toString(36).slice(2);
-};
-
-const readUsers = (): StoredUser[] => {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-};
-
-const persistUsers = (users: StoredUser[]) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-};
-
-const persistSession = (user: StoredUser | null) => {
-  if (typeof window === 'undefined') return;
-  if (!user) {
-    localStorage.removeItem(SESSION_STORAGE_KEY);
-    return;
-  }
-  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
-};
-
-const readSession = (): StoredUser | null => {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+const mapUser = (supaUser: SupabaseUser | null): User | null => {
+  if (!supaUser) return null;
+  return {
+    id: supaUser.id,
+    email: supaUser.email || '',
+    name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'Usuário',
+  };
 };
 
 export function useAuth() {
@@ -57,61 +22,59 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const session = readSession();
-    if (session) {
-      setUser({
-        id: session.uid,
-        email: session.email,
-        name: session.name,
-      });
-    }
-    setLoading(false);
+    // Set up auth state listener BEFORE getting session
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(mapUser(session?.user ?? null));
+      setLoading(false);
+    });
+
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(mapUser(session?.user ?? null));
+      setLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, name: string) => {
-    const users = readUsers();
-    const existing = users.find((u) => u.email === email);
-    if (existing) {
-      return { data: null, error: new Error('Email já cadastrado') };
-    }
-    const newUser: StoredUser = {
-      uid: createId(),
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      name,
-    };
-    const updated = [...users, newUser];
-    persistUsers(updated);
-    persistSession(newUser);
-    const authUser: User = {
-      id: newUser.uid,
-      email: newUser.email,
-      name: newUser.name,
-    };
-    setUser(authUser);
-    return { data: authUser, error: null };
+      options: {
+        emailRedirectTo: window.location.origin,
+        data: { name },
+      },
+    });
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    return { data: mapUser(data.user), error: null };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const users = readUsers();
-    const existing = users.find((u) => u.email === email && u.password === password);
-    if (!existing) {
-      return { data: null, error: new Error('Email ou senha inválidos') };
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      return { data: null, error };
     }
-    persistSession(existing);
-    const authUser: User = {
-      id: existing.uid,
-      email: existing.email,
-      name: existing.name,
-    };
-    setUser(authUser);
-    return { data: authUser, error: null };
+
+    return { data: mapUser(data.user), error: null };
   }, []);
 
   const signOut = useCallback(async () => {
-    persistSession(null);
-    setUser(null);
-    return { error: null };
+    const { error } = await supabase.auth.signOut();
+    if (!error) {
+      setUser(null);
+    }
+    return { error };
   }, []);
 
   return {
