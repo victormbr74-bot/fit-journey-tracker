@@ -71,3 +71,28 @@ Yes, you can!
 To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+
+## Assistant AI Setup (OpenAI + Supabase Edge Function)
+
+The virtual assistant supports a remote AI mode using a Supabase Edge Function.
+
+1. Set your OpenAI secrets in Supabase:
+
+```sh
+supabase secrets set OPENAI_API_KEY=your_openai_key
+supabase secrets set OPENAI_MODEL=gpt-4o-mini
+```
+
+2. Deploy the function:
+
+```sh
+supabase functions deploy assistant-chat
+```
+
+3. Verify project is linked (if needed):
+
+```sh
+supabase link --project-ref wwpvogwbiyprtusbiubh
+```
+
+If the function is unavailable, the app automatically falls back to local assistant logic.
