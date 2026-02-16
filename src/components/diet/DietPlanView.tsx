@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { DietPlan, Meal } from '@/types/workout';
 import { useProfile } from '@/hooks/useProfile';
 import { generateDietPlan } from '@/lib/dietGenerator';
+import { DIET_PLAN_STORAGE_PREFIX } from '@/lib/storageKeys';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -122,6 +123,63 @@ export function DietPlanView() {
   const [plan, setPlan] = useState<DietPlan | null>(null);
   const [expandedMeal, setExpandedMeal] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null);
+
+  const storageKey = useMemo(
+    () => (profile ? `${DIET_PLAN_STORAGE_PREFIX}${profile.id}` : null),
+    [profile?.id]
+  );
+
+  useEffect(() => {
+    if (!storageKey) {
+      setPlan(null);
+      setExpandedMeal(null);
+      setLoadedStorageKey(null);
+      return;
+    }
+
+    const stored = window.localStorage.getItem(storageKey);
+
+    if (!stored) {
+      setPlan(null);
+      setExpandedMeal(null);
+      setLoadedStorageKey(storageKey);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as DietPlan;
+
+      if (!parsed || !Array.isArray(parsed.meals)) {
+        window.localStorage.removeItem(storageKey);
+        setPlan(null);
+        setExpandedMeal(null);
+        setLoadedStorageKey(storageKey);
+        return;
+      }
+
+      setPlan(parsed);
+      setExpandedMeal(parsed.meals[0]?.id || null);
+    } catch (error) {
+      console.error('Erro ao carregar dieta salva:', error);
+      window.localStorage.removeItem(storageKey);
+      setPlan(null);
+      setExpandedMeal(null);
+    }
+
+    setLoadedStorageKey(storageKey);
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey || loadedStorageKey !== storageKey) return;
+
+    if (!plan) {
+      window.localStorage.removeItem(storageKey);
+      return;
+    }
+
+    window.localStorage.setItem(storageKey, JSON.stringify(plan));
+  }, [plan, storageKey, loadedStorageKey]);
 
   const handleGenerate = () => {
     if (!profile) return;
@@ -145,7 +203,7 @@ export function DietPlanView() {
     handleGenerate();
   };
 
-  if (loading) {
+  if (loading || (storageKey !== null && loadedStorageKey !== storageKey)) {
     return (
       <div className="pb-24 md:pb-8 space-y-6">
         <Skeleton className="h-16 w-full" />

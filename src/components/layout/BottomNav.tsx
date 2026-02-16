@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, MapPin, User, LogOut, Dumbbell, Utensils } from 'lucide-react';
+import { LayoutDashboard, MapPin, User, LogOut, Dumbbell, Utensils, Bot } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
 const navItems = [
@@ -7,6 +7,7 @@ const navItems = [
   { path: '/workout', label: 'Treino', icon: Dumbbell },
   { path: '/diet', label: 'Dieta', icon: Utensils },
   { path: '/running', label: 'Corrida', icon: MapPin },
+  { path: '/assistant', label: 'Assist.', icon: Bot },
   { path: '/profile', label: 'Perfil', icon: User },
 ];
 

@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { ExerciseVideo } from './ExerciseVideo';
 import { MusicPlayer } from './MusicPlayer';
 import { toast } from 'sonner';
+import { WORKOUT_PLAN_STORAGE_PREFIX } from '@/lib/storageKeys';
 import {
   Dumbbell,
   Clock,
@@ -25,8 +26,6 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react';
-
-const WORKOUT_STORAGE_KEY_PREFIX = 'fit-journey.workout-plan.';
 
 interface DayFormState {
   dayName: string;
@@ -237,7 +236,7 @@ export function WorkoutPlanView() {
   const [exerciseForm, setExerciseForm] = useState<ExerciseFormState>(buildDefaultExerciseForm());
 
   const storageKey = useMemo(
-    () => (profile ? `${WORKOUT_STORAGE_KEY_PREFIX}${profile.id}` : null),
+    () => (profile ? `${WORKOUT_PLAN_STORAGE_PREFIX}${profile.id}` : null),
     [profile?.id]
   );
 
