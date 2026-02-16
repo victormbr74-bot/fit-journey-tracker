@@ -7,6 +7,7 @@ export interface User {
 export interface UserProfile {
   id: string;
   name: string;
+  handle: string;
   email: string;
   birthdate: string; // ISO date string
   age: number;

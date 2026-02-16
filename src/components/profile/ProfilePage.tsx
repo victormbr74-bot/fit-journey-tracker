@@ -34,6 +34,7 @@ import {
   SOCIAL_HUB_STORAGE_PREFIX,
   SOCIAL_PROFILE_STORAGE_PREFIX,
 } from '@/lib/storageKeys';
+import { normalizeHandle, toHandle } from '@/lib/handleUtils';
 import { SocialFeedPost, SocialState, SocialStory } from '@/types/social';
 
 interface ProfileSocialInfo {
@@ -52,7 +53,6 @@ const GLOBAL_STORY_LIMIT = 500;
 const STORY_DURATION_HOURS = 24;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-const normalizeHandle = (value: string) => value.trim().replace(/^@+/, '').toLowerCase();
 const formatDateTime = (isoDate: string) => {
   const date = new Date(isoDate);
   if (Number.isNaN(date.getTime())) return '-';
@@ -167,13 +167,8 @@ export function ProfilePage() {
   const storyInputRef = useRef<HTMLInputElement | null>(null);
 
   const profileHandle = useMemo(
-    () =>
-      `@${profile?.name
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, '.')
-        .replace(/[^a-z0-9._]/g, '') || 'fit.user'}`,
-    [profile?.name]
+    () => profile?.handle || toHandle(profile?.name || profile?.email || 'fit.user'),
+    [profile?.email, profile?.handle, profile?.name]
   );
   const normalizedProfileHandle = useMemo(() => normalizeHandle(profileHandle), [profileHandle]);
   const socialHubStorageKey = useMemo(

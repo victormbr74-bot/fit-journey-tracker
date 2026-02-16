@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { isValidHandle, toHandle } from '@/lib/handleUtils';
 import {
   UserProfile,
   WeightEntry,
@@ -26,6 +27,14 @@ type ProfileContextValue = {
   loading: boolean;
   createProfile: (profileData: Partial<UserProfile>) => Promise<{ data?: UserProfile; error?: Error | null }>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<{ data?: UserProfile; error?: Error | null }>;
+  checkHandleAvailability: (
+    handle: string,
+    excludeCurrentProfile?: boolean
+  ) => Promise<{ available: boolean; normalizedHandle: string; error?: Error | null }>;
+  reserveUniqueHandle: (
+    seed: string,
+    excludeCurrentProfile?: boolean
+  ) => Promise<{ handle?: string; error?: Error | null }>;
   addWeightEntry: (weight: number) => Promise<{ error?: Error | null }>;
   addRunSession: (session: Omit<RunSession, 'id' | 'user_id' | 'recorded_at'>) => Promise<{ error?: Error | null }>;
   assignDailyChallenges: () => Promise<void>;
@@ -56,6 +65,49 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   const [loading, setLoading] = useState(true);
   const fetchedRef = useRef(false);
 
+  const reserveUniqueHandle = useCallback(
+    async (seed: string, excludeCurrentProfile = false) => {
+      const normalizedSeed = toHandle(seed || user?.name || user?.email || 'fit.user');
+      const excludeProfileId = excludeCurrentProfile ? user?.id || null : null;
+
+      const { data, error } = await supabase.rpc('reserve_unique_profile_handle', {
+        seed_input: normalizedSeed,
+        exclude_profile_id: excludeProfileId,
+      });
+
+      if (error) {
+        console.error('Error reserving unique handle:', error);
+        return { error: new Error(error.message) };
+      }
+
+      return { handle: toHandle(data || normalizedSeed), error: null };
+    },
+    [user?.email, user?.id, user?.name]
+  );
+
+  const checkHandleAvailability = useCallback(
+    async (handle: string, excludeCurrentProfile = true) => {
+      const normalizedHandle = toHandle(handle);
+      if (!isValidHandle(normalizedHandle)) {
+        return { available: false, normalizedHandle, error: null };
+      }
+
+      const excludeProfileId = excludeCurrentProfile ? user?.id || null : null;
+      const { data, error } = await supabase.rpc('is_profile_handle_available', {
+        handle_input: normalizedHandle,
+        exclude_profile_id: excludeProfileId,
+      });
+
+      if (error) {
+        console.error('Error checking handle availability:', error);
+        return { available: false, normalizedHandle, error: new Error(error.message) };
+      }
+
+      return { available: Boolean(data), normalizedHandle, error: null };
+    },
+    [user?.id]
+  );
+
   const fetchProfile = useCallback(async (): Promise<UserProfile | null> => {
     if (!user) {
       setProfile(null);
@@ -78,6 +130,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       const mappedProfile: UserProfile = {
         id: data.id,
         name: data.name,
+        handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -281,9 +334,18 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     async (profileData: Partial<UserProfile>) => {
       if (!user) return { error: new Error('Not authenticated') };
 
+      const { handle: reservedHandle, error: reserveHandleError } = await reserveUniqueHandle(
+        profileData.handle || profileData.name || user.name || user.email || 'fit.user',
+        false
+      );
+      if (reserveHandleError || !reservedHandle) {
+        return { error: reserveHandleError || new Error('Failed to reserve profile handle') };
+      }
+
       const payload = {
         id: user.id,
         name: profileData.name || user.name,
+        handle: reservedHandle,
         email: profileData.email || user.email,
         birthdate: profileData.birthdate || null,
         age: profileData.age || null,
@@ -311,6 +373,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       const mappedProfile: UserProfile = {
         id: data.id,
         name: data.name,
+        handle: isValidHandle(data.handle || '') ? data.handle : reservedHandle,
         email: data.email,
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -339,17 +402,38 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
       return { data: mappedProfile, error: null };
     },
-    [user, fetchWeightHistory]
+    [user, fetchWeightHistory, reserveUniqueHandle]
   );
 
   const updateProfile = useCallback(
     async (updates: Partial<UserProfile>) => {
       if (!user) return { error: new Error('Not authenticated') };
 
+      let nextHandle = updates.handle;
+      if (typeof updates.handle === 'string') {
+        const normalizedHandle = toHandle(updates.handle || profile?.handle || updates.name || 'fit.user');
+        if (!isValidHandle(normalizedHandle)) {
+          return { error: new Error('Formato de @usuario invalido') };
+        }
+
+        const { available, error: availabilityError } = await checkHandleAvailability(
+          normalizedHandle,
+          true
+        );
+        if (availabilityError) {
+          return { error: availabilityError };
+        }
+        if (!available) {
+          return { error: new Error('Esse @usuario ja esta em uso') };
+        }
+        nextHandle = normalizedHandle;
+      }
+
       const { data, error } = await supabase
         .from('profiles')
         .update({
           ...updates,
+          ...(typeof nextHandle === 'string' ? { handle: nextHandle } : {}),
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id)
@@ -364,6 +448,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       const mappedProfile: UserProfile = {
         id: data.id,
         name: data.name,
+        handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -382,7 +467,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       setProfile(mappedProfile);
       return { data: mappedProfile, error: null };
     },
-    [user]
+    [user, profile?.handle, checkHandleAvailability]
   );
 
   const addWeightEntry = useCallback(
@@ -585,6 +670,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     loading,
     createProfile,
     updateProfile,
+    checkHandleAvailability,
+    reserveUniqueHandle,
     addWeightEntry,
     addRunSession,
     assignDailyChallenges,

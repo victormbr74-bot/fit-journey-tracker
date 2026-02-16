@@ -63,6 +63,7 @@ export type Database = {
           created_at: string | null
           email: string
           goal: string | null
+          handle: string
           height: number | null
           id: string
           muscle_groups: string[] | null
@@ -80,6 +81,7 @@ export type Database = {
           created_at?: string | null
           email: string
           goal?: string | null
+          handle: string
           height?: number | null
           id: string
           muscle_groups?: string[] | null
@@ -97,6 +99,7 @@ export type Database = {
           created_at?: string | null
           email?: string
           goal?: string | null
+          handle?: string
           height?: number | null
           id?: string
           muscle_groups?: string[] | null
@@ -214,6 +217,15 @@ export type Database = {
     }
     Functions: {
       is_own_profile: { Args: { profile_id: string }; Returns: boolean }
+      is_profile_handle_available: {
+        Args: { handle_input: string; exclude_profile_id?: string | null }
+        Returns: boolean
+      }
+      normalize_profile_handle: { Args: { input_text: string }; Returns: string }
+      reserve_unique_profile_handle: {
+        Args: { seed_input: string; exclude_profile_id?: string | null }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never

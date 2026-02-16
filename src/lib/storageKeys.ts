@@ -8,3 +8,5 @@ export const SOCIAL_PROFILE_STORAGE_PREFIX = 'fit-journey.social-profile.';
 export const SOCIAL_GLOBAL_FEED_STORAGE_KEY = 'fit-journey.social-feed.global';
 export const SOCIAL_GLOBAL_STORIES_STORAGE_KEY = 'fit-journey.social-stories.global';
 export const SOCIAL_GLOBAL_FRIEND_REQUESTS_STORAGE_KEY = 'fit-journey.social-friend-requests.global';
+export const SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY = 'fit-journey.social-chat-events.global';
+export const SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX = 'fit-journey.social-chat-events.seen.';

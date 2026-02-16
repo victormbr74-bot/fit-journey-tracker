@@ -89,6 +89,18 @@ export interface SocialChatMessage {
   text: string;
   createdAt: string;
   postId?: string;
+  externalEventId?: string;
+}
+
+export interface SocialGlobalChatEvent {
+  id: string;
+  senderProfileId: string;
+  senderName: string;
+  senderHandle: string;
+  receiverHandle: string;
+  text: string;
+  createdAt: string;
+  postId?: string;
 }
 
 export interface SocialState {

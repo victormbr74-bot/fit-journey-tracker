@@ -7,30 +7,41 @@ import { useProfile } from '@/hooks/useProfile';
 import { GOALS, MUSCLE_GROUPS, Goal } from '@/types/user';
 import { Edit, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatHandleInput, getHandleBodyLimits, isValidHandle, toHandle } from '@/lib/handleUtils';
+
+type HandleState = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
+
+const { min: handleMinLength, max: handleMaxLength } = getHandleBodyLimits();
 
 export function EditProfileModal() {
-  const { profile, updateProfile } = useProfile();
+  const { checkHandleAvailability, profile, reserveUniqueHandle, updateProfile } = useProfile();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  
+
   const [name, setName] = useState(profile?.name || '');
+  const [handle, setHandle] = useState(profile?.handle || '');
   const [birthdate, setBirthdate] = useState(profile?.birthdate || '');
   const [weight, setWeight] = useState(profile?.weight?.toString() || '');
   const [height, setHeight] = useState(profile?.height?.toString() || '');
   const [goal, setGoal] = useState<Goal['id'] | null>(profile?.goal || null);
   const [selectedMuscles, setSelectedMuscles] = useState<string[]>(profile?.muscle_groups || []);
   const [frequency, setFrequency] = useState(profile?.training_frequency || 3);
+  const [handleState, setHandleState] = useState<HandleState>('idle');
+  const [handleHint, setHandleHint] = useState('');
 
   const handleOpenChange = (isOpen: boolean) => {
     setOpen(isOpen);
     if (isOpen && profile) {
       setName(profile.name);
+      setHandle(profile.handle || '');
       setBirthdate(profile.birthdate || '');
       setWeight(profile.weight?.toString() || '');
       setHeight(profile.height?.toString() || '');
       setGoal(profile.goal);
       setSelectedMuscles(profile.muscle_groups || []);
       setFrequency(profile.training_frequency || 3);
+      setHandleState('idle');
+      setHandleHint('');
     }
   };
 
@@ -46,21 +57,61 @@ export function EditProfileModal() {
   };
 
   const toggleMuscle = (muscleId: string) => {
-    setSelectedMuscles(prev => 
-      prev.includes(muscleId) 
-        ? prev.filter(m => m !== muscleId)
-        : [...prev, muscleId]
+    setSelectedMuscles((prev) =>
+      prev.includes(muscleId) ? prev.filter((m) => m !== muscleId) : [...prev, muscleId]
     );
+  };
+
+  const validateHandleAvailability = async () => {
+    if (!profile) return false;
+
+    const normalizedHandle = toHandle(handle || profile.handle || profile.name);
+    setHandle(normalizedHandle);
+
+    if (!isValidHandle(normalizedHandle)) {
+      setHandleState('invalid');
+      setHandleHint(`Use ${handleMinLength}-${handleMaxLength} caracteres validos.`);
+      return false;
+    }
+
+    if (normalizedHandle === profile.handle) {
+      setHandleState('available');
+      setHandleHint('Este e o seu @usuario atual.');
+      return true;
+    }
+
+    setHandleState('checking');
+    const { available, error } = await checkHandleAvailability(normalizedHandle, true);
+    if (error) {
+      setHandleState('idle');
+      setHandleHint('Nao foi possivel validar agora.');
+      return false;
+    }
+
+    if (available) {
+      setHandleState('available');
+      setHandleHint('@usuario disponivel.');
+      return true;
+    }
+
+    const { handle: suggestedHandle } = await reserveUniqueHandle(normalizedHandle, true);
+    setHandleState('taken');
+    if (suggestedHandle) {
+      setHandleHint(`@usuario indisponivel. Sugestao: ${suggestedHandle}`);
+    } else {
+      setHandleHint('@usuario indisponivel.');
+    }
+    return false;
   };
 
   const handleSave = async () => {
     if (!name.trim()) {
-      toast.error('Nome é obrigatório');
+      toast.error('Nome e obrigatorio');
       return;
     }
 
     if (!birthdate) {
-      toast.error('Data de nascimento é obrigatória');
+      toast.error('Data de nascimento e obrigatoria');
       return;
     }
 
@@ -68,12 +119,12 @@ export function EditProfileModal() {
     const parsedHeight = parseFloat(height);
 
     if (isNaN(parsedWeight) || parsedWeight <= 0) {
-      toast.error('Peso inválido');
+      toast.error('Peso invalido');
       return;
     }
 
     if (isNaN(parsedHeight) || parsedHeight <= 0) {
-      toast.error('Altura inválida');
+      toast.error('Altura invalida');
       return;
     }
 
@@ -87,12 +138,31 @@ export function EditProfileModal() {
       return;
     }
 
+    const normalizedHandle = toHandle(handle || profile?.handle || name);
+    setHandle(normalizedHandle);
+
+    if (!isValidHandle(normalizedHandle)) {
+      setHandleState('invalid');
+      setHandleHint(`Use ${handleMinLength}-${handleMaxLength} caracteres validos.`);
+      toast.error('Formato de @usuario invalido');
+      return;
+    }
+
+    if (profile?.handle !== normalizedHandle) {
+      const isAvailable = await validateHandleAvailability();
+      if (!isAvailable) {
+        toast.error('Escolha um @usuario disponivel.');
+        return;
+      }
+    }
+
     setLoading(true);
 
     const age = calculateAge(birthdate);
 
     const { error } = await updateProfile({
       name: name.trim(),
+      handle: normalizedHandle,
       birthdate,
       age,
       weight: parsedWeight,
@@ -105,10 +175,10 @@ export function EditProfileModal() {
     setLoading(false);
 
     if (error) {
-      toast.error('Erro ao salvar alterações');
+      toast.error('Erro ao salvar alteracoes');
       console.error(error);
     } else {
-      toast.success('Perfil atualizado com sucesso! 🎉');
+      toast.success('Perfil atualizado com sucesso!');
       setOpen(false);
     }
   };
@@ -127,84 +197,103 @@ export function EditProfileModal() {
         <DialogHeader>
           <DialogTitle>Editar Dados Pessoais</DialogTitle>
         </DialogHeader>
-        
+
         <div className="space-y-6 py-4">
-          {/* Nome */}
           <div className="space-y-2">
             <Label htmlFor="name">Nome</Label>
             <Input
               id="name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(event) => setName(event.target.value)}
               placeholder="Seu nome"
             />
           </div>
 
-          {/* Data de nascimento */}
+          <div className="space-y-2">
+            <Label htmlFor="handle">@usuario</Label>
+            <div className="flex gap-2">
+              <Input
+                id="handle"
+                value={handle}
+                onChange={(event) => {
+                  setHandle(formatHandleInput(event.target.value));
+                  setHandleState('idle');
+                  setHandleHint('');
+                }}
+                placeholder="@seu.usuario"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={validateHandleAvailability}
+                disabled={handleState === 'checking'}
+              >
+                {handleState === 'checking' ? 'Validando...' : 'Verificar'}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {handleHint || `Permitido: ${handleMinLength}-${handleMaxLength} caracteres, letras, numeros, . e _.`}
+            </p>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="birthdate">Data de Nascimento</Label>
             <Input
               id="birthdate"
               type="date"
               value={birthdate}
-              onChange={(e) => setBirthdate(e.target.value)}
+              onChange={(event) => setBirthdate(event.target.value)}
               max={new Date().toISOString().split('T')[0]}
             />
           </div>
 
-          {/* Peso */}
           <div className="space-y-2">
             <Label htmlFor="weight">Peso (kg)</Label>
             <Input
               id="weight"
               type="number"
               value={weight}
-              onChange={(e) => setWeight(e.target.value)}
+              onChange={(event) => setWeight(event.target.value)}
               placeholder="Seu peso"
               min="1"
               step="0.1"
             />
           </div>
 
-          {/* Altura */}
           <div className="space-y-2">
             <Label htmlFor="height">Altura (cm)</Label>
             <Input
               id="height"
               type="number"
               value={height}
-              onChange={(e) => setHeight(e.target.value)}
+              onChange={(event) => setHeight(event.target.value)}
               placeholder="Sua altura"
               min="1"
             />
           </div>
 
-          {/* Objetivo */}
           <div className="space-y-2">
             <Label>Objetivo</Label>
             <div className="grid grid-cols-2 gap-2">
-              {GOALS.map((g) => (
+              {GOALS.map((currentGoal) => (
                 <button
-                  key={g.id}
+                  key={currentGoal.id}
                   type="button"
-                  onClick={() => setGoal(g.id)}
+                  onClick={() => setGoal(currentGoal.id)}
                   className={`p-3 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-1 ${
-                    goal === g.id
+                    goal === currentGoal.id
                       ? 'border-primary bg-primary/10'
                       : 'border-border bg-secondary/30 hover:border-primary/50'
                   }`}
                 >
-                  <span className="text-2xl">{g.icon}</span>
-                  <span className="font-medium text-xs">{g.label}</span>
-                  {goal === g.id && (
-                    <Check className="w-4 h-4 text-primary" />
-                  )}
+                  <span className="text-2xl">{currentGoal.icon}</span>
+                  <span className="font-medium text-xs">{currentGoal.label}</span>
+                  {goal === currentGoal.id && <Check className="w-4 h-4 text-primary" />}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Grupos Musculares */}
           <div className="space-y-2">
             <Label>Grupos Musculares</Label>
             <div className="grid grid-cols-2 gap-2">
@@ -221,17 +310,14 @@ export function EditProfileModal() {
                 >
                   <span className="text-xl">{muscle.icon}</span>
                   <span className="font-medium text-xs">{muscle.label}</span>
-                  {selectedMuscles.includes(muscle.id) && (
-                    <Check className="w-4 h-4 text-primary" />
-                  )}
+                  {selectedMuscles.includes(muscle.id) && <Check className="w-4 h-4 text-primary" />}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Frequência de Treino */}
           <div className="space-y-2">
-            <Label>Frequência Semanal</Label>
+            <Label>Frequencia Semanal</Label>
             <div className="grid grid-cols-7 gap-1">
               {[1, 2, 3, 4, 5, 6, 7].map((day) => (
                 <button
@@ -253,7 +339,6 @@ export function EditProfileModal() {
             </p>
           </div>
 
-          {/* Botões */}
           <div className="flex gap-3 pt-4">
             <Button
               variant="outline"
@@ -263,12 +348,7 @@ export function EditProfileModal() {
             >
               Cancelar
             </Button>
-            <Button
-              variant="energy"
-              onClick={handleSave}
-              className="flex-1"
-              disabled={loading}
-            >
+            <Button variant="energy" onClick={handleSave} className="flex-1" disabled={loading}>
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin mr-2" />

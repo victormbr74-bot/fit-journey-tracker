@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,13 +7,16 @@ import { useProfile } from '@/hooks/useProfile';
 import { GOALS, MUSCLE_GROUPS, Goal } from '@/types/user';
 import { ArrowRight, ArrowLeft, Check, Ruler, Weight, Calendar, Target, Dumbbell, Clock } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatHandleInput, getHandleBodyLimits, isValidHandle, toHandle } from '@/lib/handleUtils';
 
-type Step = 'birthdate' | 'weight' | 'height' | 'goal' | 'muscles' | 'frequency';
+type Step = 'handle' | 'birthdate' | 'weight' | 'height' | 'goal' | 'muscles' | 'frequency';
 
-const steps: Step[] = ['birthdate', 'weight', 'height', 'goal', 'muscles', 'frequency'];
+const steps: Step[] = ['handle', 'birthdate', 'weight', 'height', 'goal', 'muscles', 'frequency'];
+const { min: handleMinLength, max: handleMaxLength } = getHandleBodyLimits();
 
 export function OnboardingFlow() {
   const [currentStep, setCurrentStep] = useState(0);
+  const [handle, setHandle] = useState('');
   const [birthdate, setBirthdate] = useState('');
   const [weight, setWeight] = useState('');
   const [height, setHeight] = useState('');
@@ -21,10 +24,17 @@ export function OnboardingFlow() {
   const [selectedMuscles, setSelectedMuscles] = useState<string[]>([]);
   const [frequency, setFrequency] = useState(3);
   const [loading, setLoading] = useState(false);
+  const [checkingHandle, setCheckingHandle] = useState(false);
   
   const { user } = useAuth();
-  const { createProfile } = useProfile();
+  const { checkHandleAvailability, createProfile, reserveUniqueHandle } = useProfile();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!user) return;
+    const seed = user.name || user.email?.split('@')[0] || 'fit.user';
+    setHandle(toHandle(seed));
+  }, [user]);
 
   const calculateAge = (dateString: string): number => {
     const today = new Date();
@@ -38,35 +48,65 @@ export function OnboardingFlow() {
   };
 
   const handleNext = async () => {
+    if (steps[currentStep] === 'handle') {
+      const normalizedHandle = toHandle(handle);
+      if (!isValidHandle(normalizedHandle)) {
+        toast.error(`Use um @usuario com ${handleMinLength} a ${handleMaxLength} caracteres.`);
+        return;
+      }
+
+      setCheckingHandle(true);
+      const { available, error } = await checkHandleAvailability(normalizedHandle, false);
+      if (error) {
+        toast.error('Nao foi possivel validar o @usuario agora.');
+        setCheckingHandle(false);
+        return;
+      }
+      if (!available) {
+        const { handle: suggestedHandle } = await reserveUniqueHandle(normalizedHandle, false);
+        if (suggestedHandle) {
+          setHandle(suggestedHandle);
+          toast.error(`Esse @usuario ja existe. Sugestao: ${suggestedHandle}`);
+        } else {
+          toast.error('Esse @usuario ja esta em uso.');
+        }
+        setCheckingHandle(false);
+        return;
+      }
+      setHandle(normalizedHandle);
+      setCheckingHandle(false);
+    }
+
     if (currentStep < steps.length - 1) {
       setCurrentStep(currentStep + 1);
-    } else {
-      // Complete onboarding
-      if (goal && user) {
-        setLoading(true);
-        const age = calculateAge(birthdate);
-        
-        const { error } = await createProfile({
-          name: user.name || user.email?.split('@')[0] || 'Usuário',
-          email: user.email || '',
-          birthdate,
-          age,
-          weight: parseFloat(weight),
-          height: parseFloat(height),
-          goal,
-          muscle_groups: selectedMuscles,
-          training_frequency: frequency,
-        });
+      return;
+    }
 
-        if (error) {
-          toast.error('Erro ao salvar perfil. Tente novamente.');
-          console.error(error);
-        } else {
-          toast.success('Perfil criado com sucesso! 🎉');
-          navigate('/dashboard');
-        }
-        setLoading(false);
+    if (goal && user) {
+      setLoading(true);
+      const age = calculateAge(birthdate);
+
+      const { error } = await createProfile({
+        name: user.name || user.email?.split('@')[0] || 'Usuario',
+        handle: toHandle(handle),
+        email: user.email || '',
+        birthdate,
+        age,
+        weight: parseFloat(weight),
+        height: parseFloat(height),
+        goal,
+        muscle_groups: selectedMuscles,
+        training_frequency: frequency,
+      });
+
+      if (error) {
+        toast.error('Erro ao salvar perfil. Tente novamente.');
+        console.error(error);
+      } else {
+        toast.success('Perfil criado com sucesso!');
+        navigate('/dashboard');
       }
+      setLoading(false);
     }
   };
 
@@ -86,10 +126,13 @@ export function OnboardingFlow() {
 
   const canProceed = () => {
     switch (steps[currentStep]) {
-      case 'birthdate':
+      case 'handle':
+        return isValidHandle(toHandle(handle));
+      case 'birthdate': {
         if (!birthdate) return false;
         const age = calculateAge(birthdate);
         return age >= 10 && age <= 120;
+      }
       case 'weight':
         return weight && parseFloat(weight) > 0;
       case 'height':
@@ -107,6 +150,11 @@ export function OnboardingFlow() {
 
   const renderStep = () => {
     const stepConfig = {
+      handle: {
+        icon: Target,
+        title: 'Escolha seu @usuario',
+        subtitle: 'Seu @ sera unico e pode ser alterado no perfil',
+      },
       birthdate: {
         icon: Calendar,
         title: 'Qual sua data de nascimento?',
@@ -151,6 +199,21 @@ export function OnboardingFlow() {
           <h2 className="text-2xl font-bold text-center">{config.title}</h2>
           <p className="text-muted-foreground text-center mt-2">{config.subtitle}</p>
         </div>
+
+        {steps[currentStep] === 'handle' && (
+          <div className="space-y-3">
+            <Input
+              type="text"
+              value={handle}
+              onChange={(event) => setHandle(formatHandleInput(event.target.value))}
+              className="text-center text-xl h-16"
+              placeholder="@seu.usuario"
+            />
+            <p className="text-xs text-muted-foreground text-center">
+              Use letras minusculas, numeros, ponto e underscore.
+            </p>
+          </div>
+        )}
 
         {steps[currentStep] === 'birthdate' && (
           <Input
@@ -327,10 +390,10 @@ export function OnboardingFlow() {
               variant="energy"
               size="lg"
               onClick={handleNext}
-              disabled={!canProceed() || loading}
+              disabled={!canProceed() || loading || checkingHandle}
               className="flex-1"
             >
-              {loading ? 'Salvando...' : currentStep === steps.length - 1 ? 'Começar' : 'Próximo'}
+              {loading ? 'Salvando...' : checkingHandle ? 'Validando @...' : currentStep === steps.length - 1 ? 'Comecar' : 'Proximo'}
               <ArrowRight className="w-5 h-5" />
             </Button>
           </div>
@@ -339,3 +402,7 @@ export function OnboardingFlow() {
     </div>
   );
 }
+
+
+
+

@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BellRing,
   Camera,
@@ -11,7 +11,9 @@ import {
   Instagram,
   MessageCircle,
   Plus,
+  Search,
   Send,
+  Share2,
   Target,
   Trophy,
   UserMinus,
@@ -22,11 +24,19 @@ import {
 import { toast } from 'sonner';
 
 import {
+  SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY,
   SOCIAL_GLOBAL_FEED_STORAGE_KEY,
   SOCIAL_GLOBAL_FRIEND_REQUESTS_STORAGE_KEY,
   SOCIAL_GLOBAL_STORIES_STORAGE_KEY,
+  SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX,
   SOCIAL_HUB_STORAGE_PREFIX,
 } from '@/lib/storageKeys';
+import {
+  formatHandleInput,
+  normalizeHandle,
+  sanitizeHandleBody,
+  toHandle,
+} from '@/lib/handleUtils';
 import { UserProfile } from '@/types/user';
 import {
   SocialClan,
@@ -36,6 +46,7 @@ import {
   SocialFeedPost,
   SocialFriend,
   SocialFriendRequest,
+  SocialGlobalChatEvent,
   SocialNotification,
   SocialNotificationType,
   SocialSection,
@@ -91,18 +102,12 @@ const MAX_IMAGE_SIZE = 1080;
 const GLOBAL_FEED_POST_LIMIT = 500;
 const GLOBAL_STORY_LIMIT = 500;
 const GLOBAL_FRIEND_REQUEST_LIMIT = 500;
+const GLOBAL_CHAT_EVENT_LIMIT = 1000;
+const SEEN_CHAT_EVENT_LIMIT = 2000;
 const STORY_DURATION_HOURS = 24;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-const normalizeHandle = (value: string) => value.trim().replace(/^@+/, '').toLowerCase();
-const sanitizeHandleInput = (value: string) => normalizeHandle(value).replace(/[^a-z0-9._]/g, '');
-const formatHandleInput = (value: string) => {
-  const compact = value.trim().replace(/\s+/g, '');
-  if (!compact) return '';
-  if (compact === '@') return '@';
-  const sanitized = sanitizeHandleInput(compact);
-  return sanitized ? `@${sanitized}` : '@';
-};
+const sanitizeHandleInput = (value: string) => sanitizeHandleBody(value);
 
 const formatDateTime = (isoDate: string) => {
   const date = new Date(isoDate);
@@ -136,6 +141,23 @@ const sanitizeFriendRequests = (requests: SocialFriendRequest[]) =>
     .filter((request) => request?.id && request.senderHandle && request.receiverHandle)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, GLOBAL_FRIEND_REQUEST_LIMIT);
+
+const sanitizeChatEvents = (events: SocialGlobalChatEvent[]) =>
+  events
+    .filter(
+      (event) =>
+        event?.id &&
+        event.senderProfileId &&
+        event.senderHandle &&
+        event.receiverHandle &&
+        event.text &&
+        event.createdAt
+    )
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(-GLOBAL_CHAT_EVENT_LIMIT);
+
+const sanitizeSeenChatEventIds = (eventIds: string[]) =>
+  Array.from(new Set(eventIds.filter(Boolean))).slice(-SEEN_CHAT_EVENT_LIMIT);
 
 const convertImageToDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -210,9 +232,13 @@ const getInitials = (name: string) => {
 
 export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs = true }: SocialHubProps) {
   const storageKey = useMemo(() => `${SOCIAL_HUB_STORAGE_PREFIX}${profile.id}`, [profile.id]);
+  const seenChatEventsStorageKey = useMemo(
+    () => `${SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX}${profile.id}`,
+    [profile.id]
+  );
   const profileHandle = useMemo(
-    () => `@${profile.name.trim().toLowerCase().replace(/\s+/g, '.').replace(/[^a-z0-9._]/g, '') || 'fit.user'}`,
-    [profile.name]
+    () => profile.handle || toHandle(profile.name || profile.email || 'fit.user'),
+    [profile.email, profile.handle, profile.name]
   );
   const normalizedProfileHandle = useMemo(() => normalizeHandle(profileHandle), [profileHandle]);
 
@@ -220,6 +246,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [globalPosts, setGlobalPosts] = useState<SocialFeedPost[]>([]);
   const [globalStories, setGlobalStories] = useState<SocialStory[]>([]);
   const [friendRequests, setFriendRequests] = useState<SocialFriendRequest[]>([]);
+  const [globalChatEvents, setGlobalChatEvents] = useState<SocialGlobalChatEvent[]>([]);
+  const [seenChatEventIds, setSeenChatEventIds] = useState<string[]>([]);
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SocialSection>(defaultSection);
 
@@ -246,6 +274,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [activeChatFriendId, setActiveChatFriendId] = useState('');
   const [feedShareFriendId, setFeedShareFriendId] = useState('');
   const [chatInput, setChatInput] = useState('');
+  const [chatEventsLoaded, setChatEventsLoaded] = useState(false);
+
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [sharePostId, setSharePostId] = useState('');
+  const [shareSearch, setShareSearch] = useState('');
+  const [shareMessage, setShareMessage] = useState('');
+  const [selectedShareFriendIds, setSelectedShareFriendIds] = useState<string[]>([]);
 
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [composerMode, setComposerMode] = useState<'post' | 'story'>('post');
@@ -257,6 +292,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const composerGalleryInputRef = useRef<HTMLInputElement | null>(null);
   const composerCameraInputRef = useRef<HTMLInputElement | null>(null);
   const chatMessagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const notifiedIncomingRequestIdsRef = useRef<Set<string>>(new Set());
+  const initializedIncomingRequestNotificationsRef = useRef(false);
 
   useEffect(() => {
     setActiveSection(defaultSection);
@@ -301,7 +338,34 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     } else {
       setFriendRequests([]);
     }
-  }, []);
+
+    const storedGlobalChatEvents = window.localStorage.getItem(SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY);
+    if (storedGlobalChatEvents) {
+      try {
+        const parsed = JSON.parse(storedGlobalChatEvents) as SocialGlobalChatEvent[];
+        setGlobalChatEvents(sanitizeChatEvents(Array.isArray(parsed) ? parsed : []));
+      } catch (error) {
+        console.error('Erro ao carregar eventos globais de chat:', error);
+        setGlobalChatEvents([]);
+      }
+    } else {
+      setGlobalChatEvents([]);
+    }
+
+    const storedSeenChatEvents = window.localStorage.getItem(seenChatEventsStorageKey);
+    if (storedSeenChatEvents) {
+      try {
+        const parsed = JSON.parse(storedSeenChatEvents) as string[];
+        setSeenChatEventIds(sanitizeSeenChatEventIds(Array.isArray(parsed) ? parsed : []));
+      } catch (error) {
+        console.error('Erro ao carregar eventos de chat vistos:', error);
+        setSeenChatEventIds([]);
+      }
+    } else {
+      setSeenChatEventIds([]);
+    }
+    setChatEventsLoaded(true);
+  }, [seenChatEventsStorageKey]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -323,6 +387,22 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       JSON.stringify(sanitizeFriendRequests(friendRequests))
     );
   }, [friendRequests]);
+
+  useEffect(() => {
+    if (!chatEventsLoaded) return;
+    window.localStorage.setItem(
+      SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY,
+      JSON.stringify(sanitizeChatEvents(globalChatEvents))
+    );
+  }, [globalChatEvents, chatEventsLoaded]);
+
+  useEffect(() => {
+    if (!chatEventsLoaded) return;
+    window.localStorage.setItem(
+      seenChatEventsStorageKey,
+      JSON.stringify(sanitizeSeenChatEventIds(seenChatEventIds))
+    );
+  }, [seenChatEventIds, seenChatEventsStorageKey, chatEventsLoaded]);
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
@@ -352,11 +432,29 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           console.error('Erro ao sincronizar solicitacoes de amizade:', error);
         }
       }
+
+      if (event.key === SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY) {
+        try {
+          const parsed = event.newValue ? (JSON.parse(event.newValue) as SocialGlobalChatEvent[]) : [];
+          setGlobalChatEvents(sanitizeChatEvents(Array.isArray(parsed) ? parsed : []));
+        } catch (error) {
+          console.error('Erro ao sincronizar eventos globais de chat:', error);
+        }
+      }
+
+      if (event.key === seenChatEventsStorageKey) {
+        try {
+          const parsed = event.newValue ? (JSON.parse(event.newValue) as string[]) : [];
+          setSeenChatEventIds(sanitizeSeenChatEventIds(Array.isArray(parsed) ? parsed : []));
+        } catch (error) {
+          console.error('Erro ao sincronizar eventos de chat vistos:', error);
+        }
+      }
     };
 
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, []);
+  }, [seenChatEventsStorageKey]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
@@ -443,6 +541,26 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     [friendRequests, profile.id]
   );
 
+  useEffect(() => {
+    const trackedIds = notifiedIncomingRequestIdsRef.current;
+    if (!initializedIncomingRequestNotificationsRef.current) {
+      incomingFriendRequests.forEach((request) => trackedIds.add(request.id));
+      initializedIncomingRequestNotificationsRef.current = true;
+      return;
+    }
+
+    incomingFriendRequests.forEach((request) => {
+      if (trackedIds.has(request.id)) return;
+      trackedIds.add(request.id);
+      pushNotification({
+        type: 'friend',
+        title: 'Novo pedido para seguir',
+        description: `${request.senderName} quer seguir voce.`,
+      });
+      toast.info(`Novo pedido para seguir de ${request.senderName}.`);
+    });
+  }, [incomingFriendRequests, pushNotification]);
+
   const friendHandleSearch = useMemo(() => sanitizeHandleInput(friendHandle), [friendHandle]);
 
   const discoverableProfiles = useMemo(() => {
@@ -454,7 +572,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
       const fallbackName = rawName?.trim() || `@${normalizedHandle}`;
       const nextEntry: DiscoverableProfile = {
-        handle: `@${normalizedHandle}`,
+        handle: toHandle(normalizedHandle),
         normalizedHandle,
         name: fallbackName,
         goal: rawGoal?.trim() || 'Sem meta definida',
@@ -525,7 +643,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         nextFriends.unshift({
           id: `friend-${request.id}-${isSender ? 'receiver' : 'sender'}`,
           name: isSender ? request.receiverName : request.senderName,
-          handle: `@${normalizedFriendHandle}`,
+          handle: toHandle(normalizedFriendHandle),
           goal: isSender
             ? request.receiverGoal || 'Sem meta definida'
             : request.senderGoal || 'Sem meta definida',
@@ -558,10 +676,33 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     [socialState.friends]
   );
 
+  const friendsByHandle = useMemo(
+    () =>
+      new Map(
+        socialState.friends.map((friend) => [normalizeHandle(friend.handle), friend] as const)
+      ),
+    [socialState.friends]
+  );
+
   const postsById = useMemo(
     () => new Map(globalPosts.map((post) => [post.id, post])),
     [globalPosts]
   );
+
+  const sharePost = useMemo(
+    () => globalPosts.find((post) => post.id === sharePostId) ?? null,
+    [globalPosts, sharePostId]
+  );
+
+  const filteredShareFriends = useMemo(() => {
+    const query = shareSearch.trim().toLowerCase();
+    if (!query) return socialState.friends;
+    return socialState.friends.filter(
+      (friend) =>
+        friend.name.toLowerCase().includes(query) ||
+        friend.handle.toLowerCase().includes(query)
+    );
+  }, [socialState.friends, shareSearch]);
 
   const activeStories = useMemo(() => sanitizeStories(globalStories), [globalStories]);
 
@@ -584,12 +725,123 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   );
 
   useEffect(() => {
+    if (!chatEventsLoaded) return;
+
+    const unseenIncomingEvents = globalChatEvents.filter(
+      (event) =>
+        event.senderProfileId !== profile.id &&
+        normalizeHandle(event.receiverHandle) === normalizedProfileHandle &&
+        !seenChatEventIds.includes(event.id)
+    );
+    if (!unseenIncomingEvents.length) return;
+
+    const existingEventIds = new Set(
+      socialState.chatMessages
+        .map((message) => message.externalEventId)
+        .filter((eventId): eventId is string => Boolean(eventId))
+    );
+    const nextFriendsToAdd: SocialFriend[] = [];
+    const nextMessages: SocialChatMessage[] = [];
+
+    unseenIncomingEvents.forEach((event) => {
+      if (existingEventIds.has(event.id)) return;
+
+      const senderHandle = normalizeHandle(event.senderHandle);
+      const knownFriend =
+        friendsByHandle.get(senderHandle) ||
+        nextFriendsToAdd.find((friend) => normalizeHandle(friend.handle) === senderHandle);
+
+      let friendId = knownFriend?.id || '';
+      if (!friendId) {
+        friendId = `friend-chat-${senderHandle || createId()}`;
+        nextFriendsToAdd.push({
+          id: friendId,
+          name: event.senderName,
+          handle: toHandle(senderHandle || event.senderHandle),
+          goal: 'Sem meta definida',
+          addedAt: event.createdAt,
+        });
+      }
+
+      nextMessages.push({
+        id: createId(),
+        friendId,
+        sender: 'friend',
+        text: event.text,
+        createdAt: event.createdAt,
+        postId: event.postId,
+        externalEventId: event.id,
+      });
+    });
+
+    if (nextFriendsToAdd.length || nextMessages.length) {
+      setSocialState((previous) => {
+        const knownHandles = new Set(previous.friends.map((friend) => normalizeHandle(friend.handle)));
+        const mergedFriends = [...previous.friends];
+        nextFriendsToAdd.forEach((friend) => {
+          const normalized = normalizeHandle(friend.handle);
+          if (!normalized || knownHandles.has(normalized)) return;
+          mergedFriends.unshift(friend);
+          knownHandles.add(normalized);
+        });
+        return {
+          ...previous,
+          friends: mergedFriends,
+          chatMessages: [...previous.chatMessages, ...nextMessages],
+        };
+      });
+
+      nextMessages.forEach((message) => {
+        const sender = nextFriendsToAdd.find((friend) => friend.id === message.friendId) ||
+          friendsById.get(message.friendId);
+        pushNotification({
+          type: 'chat',
+          title: `Nova mensagem de ${sender?.name || 'Contato'}`,
+          description: message.text,
+        });
+      });
+    }
+
+    setSeenChatEventIds((previous) => sanitizeSeenChatEventIds([...previous, ...unseenIncomingEvents.map((event) => event.id)]));
+  }, [
+    chatEventsLoaded,
+    friendsByHandle,
+    friendsById,
+    globalChatEvents,
+    normalizedProfileHandle,
+    profile.id,
+    pushNotification,
+    seenChatEventIds,
+    socialState.chatMessages,
+  ]);
+
+  useEffect(() => {
+    if (!isShareDialogOpen) return;
+    if (!sharePostId) return;
+    if (globalPosts.some((post) => post.id === sharePostId)) return;
+    setIsShareDialogOpen(false);
+    setSharePostId('');
+  }, [globalPosts, isShareDialogOpen, sharePostId]);
+
+  useEffect(() => {
     const container = chatMessagesContainerRef.current;
     if (!container) return;
     container.scrollTop = container.scrollHeight;
   }, [activeChatMessages]);
 
-  const pushNotification = (notification: Omit<SocialNotification, 'id' | 'createdAt' | 'read'>) => {
+  const triggerSystemNotification = useCallback((title: string, description: string) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, { body: description });
+    }
+    if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
+      navigator.vibrate([70, 40, 90]);
+    }
+  }, []);
+
+  const pushNotification = useCallback((
+    notification: Omit<SocialNotification, 'id' | 'createdAt' | 'read'>,
+    notifySystem = true
+  ) => {
     const nextNotification: SocialNotification = {
       id: createId(),
       createdAt: new Date().toISOString(),
@@ -602,10 +854,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       notifications: [nextNotification, ...prev.notifications].slice(0, NOTIFICATION_LIMIT),
     }));
 
-    if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(nextNotification.title, { body: nextNotification.description });
+    if (notifySystem) {
+      triggerSystemNotification(nextNotification.title, nextNotification.description);
     }
-  };
+  }, [triggerSystemNotification]);
 
   const handleEnableBrowserNotifications = async () => {
     if (!('Notification' in window)) {
@@ -693,7 +945,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       senderHandle: profileHandle,
       senderGoal: PROFILE_GOAL_LABEL[profile.goal],
       receiverName,
-      receiverHandle: `@${receiverHandleValue}`,
+      receiverHandle: toHandle(receiverHandleValue),
       receiverGoal: receiverGoalLabel,
       status: 'pending',
       createdAt: new Date().toISOString(),
@@ -1110,11 +1362,43 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
   };
 
+  const appendGlobalChatEvent = (event: SocialGlobalChatEvent) => {
+    setGlobalChatEvents((previous) => sanitizeChatEvents([...previous, event]));
+  };
+
   const appendChatMessage = (message: SocialChatMessage) => {
     setSocialState((prev) => ({
       ...prev,
       chatMessages: [...prev.chatMessages, message],
     }));
+  };
+
+  const sendMessageToFollowedProfile = (friendId: string, text: string, postId?: string) => {
+    const friend = friendsById.get(friendId);
+    if (!friend) return false;
+
+    const createdAt = new Date().toISOString();
+    appendChatMessage({
+      id: createId(),
+      friendId,
+      sender: 'me',
+      text,
+      createdAt,
+      postId,
+    });
+
+    appendGlobalChatEvent({
+      id: createId(),
+      senderProfileId: profile.id,
+      senderName: profile.name,
+      senderHandle: profileHandle,
+      receiverHandle: friend.handle,
+      text,
+      createdAt,
+      postId,
+    });
+
+    return true;
   };
 
   const handleSendChatMessage = (event: FormEvent<HTMLFormElement>) => {
@@ -1126,42 +1410,94 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     const text = chatInput.trim();
     if (!text) return;
 
-    appendChatMessage({
-      id: createId(),
-      friendId: activeChatFriendId,
-      sender: 'me',
-      text,
-      createdAt: new Date().toISOString(),
-    });
+    const wasSent = sendMessageToFollowedProfile(activeChatFriendId, text);
+    if (!wasSent) {
+      toast.error('Nao foi possivel enviar para esse perfil.');
+      return;
+    }
     setChatInput('');
   };
 
-  const handleSharePostWithFriend = (post: SocialFeedPost) => {
-    const friendId = feedShareFriendId || activeChatFriendId;
-    if (!friendId) {
+  const handleSharePostWithFriend = (
+    post: SocialFeedPost,
+    friendId?: string,
+    customMessage?: string
+  ) => {
+    const resolvedFriendId = friendId || feedShareFriendId || activeChatFriendId;
+    if (!resolvedFriendId) {
       toast.error('Selecione quem voce segue para compartilhar.');
       return;
     }
 
-    const friend = friendsById.get(friendId);
+    const friend = friendsById.get(resolvedFriendId);
+    if (!friend) {
+      toast.error('Perfil selecionado nao encontrado.');
+      return;
+    }
 
-    appendChatMessage({
-      id: createId(),
-      friendId,
-      sender: 'me',
-      text: `Compartilhei este post com voce: ${post.caption}`,
-      createdAt: new Date().toISOString(),
-      postId: post.id,
-    });
+    const text = customMessage?.trim()
+      ? `${customMessage.trim()}\n\nCompartilhei este post com voce: ${post.caption}`
+      : `Compartilhei este post com voce: ${post.caption}`;
+
+    const wasSent = sendMessageToFollowedProfile(resolvedFriendId, text, post.id);
+    if (!wasSent) {
+      toast.error('Nao foi possivel compartilhar no chat.');
+      return;
+    }
 
     markPostAsShared(post.id);
-    setActiveChatFriendId(friendId);
+    setActiveChatFriendId(resolvedFriendId);
     pushNotification({
       type: 'chat',
-      title: 'Post enviado para quem voce segue',
+      title: 'Post compartilhado',
       description: `${friend?.name || 'Contato'} recebeu um compartilhamento do feed.`,
-    });
-    toast.success('Post compartilhado no chat.');
+    }, false);
+  };
+
+  const openShareDialog = (post: SocialFeedPost) => {
+    setSharePostId(post.id);
+    setShareSearch('');
+    setShareMessage('');
+    setSelectedShareFriendIds(feedShareFriendId ? [feedShareFriendId] : []);
+    setIsShareDialogOpen(true);
+  };
+
+  const closeShareDialog = () => {
+    setIsShareDialogOpen(false);
+    setSharePostId('');
+    setShareSearch('');
+    setShareMessage('');
+    setSelectedShareFriendIds([]);
+  };
+
+  const toggleShareFriendSelection = (friendId: string) => {
+    setSelectedShareFriendIds((previous) =>
+      previous.includes(friendId)
+        ? previous.filter((id) => id !== friendId)
+        : [...previous, friendId]
+    );
+  };
+
+  const handleSendShareFromDialog = () => {
+    if (!sharePost) {
+      toast.error('Selecione um post para compartilhar.');
+      return;
+    }
+    if (!selectedShareFriendIds.length) {
+      toast.error('Selecione ao menos um perfil para compartilhar.');
+      return;
+    }
+
+    selectedShareFriendIds.forEach((friendId) =>
+      handleSharePostWithFriend(sharePost, friendId, shareMessage)
+    );
+
+    toast.success(
+      selectedShareFriendIds.length > 1
+        ? 'Post enviado para os perfis selecionados.'
+        : 'Post enviado no chat.'
+    );
+    closeShareDialog();
   };
 
   const handleMarkAllNotificationsAsRead = () => {
@@ -1715,23 +2051,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="text-lg">Feed da comunidade</CardTitle>
-              <CardDescription>Compartilhe no WhatsApp, Instagram e no chat com quem voce segue.</CardDescription>
-              <div className="space-y-2">
-                <Label htmlFor="feed-share-friend">Compartilhar com quem voce segue (chat)</Label>
-                <select
-                  id="feed-share-friend"
-                  className="flex h-12 w-full rounded-lg border border-border bg-secondary/50 px-3 text-sm"
-                  value={feedShareFriendId}
-                  onChange={(event) => setFeedShareFriendId(event.target.value)}
-                >
-                  {!socialState.friends.length && <option value="">Nenhum perfil seguido disponivel</option>}
-                  {socialState.friends.map((friend) => (
-                    <option key={friend.id} value={friend.id}>
-                      {friend.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <CardDescription>Compartilhe em um painel estilo Instagram.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {!globalPosts.length && <p className="text-sm text-muted-foreground">Ainda nao ha posts.</p>}
@@ -1751,27 +2071,14 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       <Heart className="h-4 w-4" />
                       Curtir ({post.likes})
                     </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={() => handleShareOnWhatsApp(post)}>
-                      <MessageCircle className="h-4 w-4" />
-                      WhatsApp
-                    </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={() => handleShareOnInstagram(post)}>
-                      <Instagram className="h-4 w-4" />
-                      Instagram
-                    </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={() => handleCopyPostText(post)}>
-                      <Copy className="h-4 w-4" />
-                      Copiar texto
-                    </Button>
                     <Button
                       type="button"
                       size="sm"
-                      variant="outline"
-                      onClick={() => handleSharePostWithFriend(post)}
-                      disabled={!socialState.friends.length}
+                      variant="energy"
+                      onClick={() => openShareDialog(post)}
                     >
-                      <Users className="h-4 w-4" />
-                      Compartilhar no chat
+                      <Share2 className="h-4 w-4" />
+                      Compartilhar
                     </Button>
                   </div>
                 </div>
@@ -1852,6 +2159,130 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={isShareDialogOpen} onOpenChange={(open) => (open ? setIsShareDialogOpen(true) : closeShareDialog())}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Compartilhar</DialogTitle>
+            <DialogDescription>
+              Escolha para quem enviar, como no painel do Instagram.
+            </DialogDescription>
+          </DialogHeader>
+
+          {sharePost && (
+            <div className="rounded-lg border border-border/70 bg-card/40 p-2">
+              <div className="flex items-center gap-3">
+                <img
+                  src={sharePost.imageDataUrl}
+                  alt={`Post de ${sharePost.authorName}`}
+                  className="h-14 w-14 rounded-md object-cover"
+                />
+                <div>
+                  <p className="text-sm font-medium line-clamp-1">{sharePost.authorName}</p>
+                  <p className="text-xs text-muted-foreground line-clamp-2">{sharePost.caption}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="share-search">Pesquisar perfil</Label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="share-search"
+                value={shareSearch}
+                onChange={(event) => setShareSearch(event.target.value)}
+                className="pl-10"
+                placeholder="Digite nome ou @usuario"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Enviar para</Label>
+            <div className="max-h-44 overflow-y-auto rounded-lg border border-border/70 p-2">
+              {!filteredShareFriends.length && (
+                <p className="text-sm text-muted-foreground">Nenhum perfil encontrado.</p>
+              )}
+              <div className="grid grid-cols-3 gap-2">
+                {filteredShareFriends.map((friend) => {
+                  const selected = selectedShareFriendIds.includes(friend.id);
+                  return (
+                    <button
+                      key={friend.id}
+                      type="button"
+                      onClick={() => toggleShareFriendSelection(friend.id)}
+                      className={`rounded-lg border p-2 text-center transition-colors ${
+                        selected
+                          ? 'border-primary bg-primary/15'
+                          : 'border-border/70 hover:border-primary/40 hover:bg-secondary/40'
+                      }`}
+                    >
+                      <div className="mx-auto mb-1 flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-warning/50 via-primary/35 to-success/45 text-sm font-semibold">
+                        {getInitials(friend.name)}
+                      </div>
+                      <p className="line-clamp-1 text-xs font-medium">{friend.name}</p>
+                      <p className="line-clamp-1 text-[10px] text-muted-foreground">{friend.handle}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="share-message">Mensagem (opcional)</Label>
+            <Textarea
+              id="share-message"
+              value={shareMessage}
+              onChange={(event) => setShareMessage(event.target.value)}
+              placeholder="Digite uma mensagem para acompanhar o compartilhamento."
+            />
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => sharePost && handleShareOnInstagram(sharePost)}
+              disabled={!sharePost}
+            >
+              <Instagram className="h-4 w-4" />
+              Instagram
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => sharePost && handleShareOnWhatsApp(sharePost)}
+              disabled={!sharePost}
+            >
+              <MessageCircle className="h-4 w-4" />
+              WhatsApp
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => sharePost && handleCopyPostText(sharePost)}
+              disabled={!sharePost}
+            >
+              <Copy className="h-4 w-4" />
+              Copiar
+            </Button>
+          </div>
+
+          <Button
+            type="button"
+            variant="energy"
+            className="w-full"
+            disabled={!sharePost || !selectedShareFriendIds.length}
+            onClick={handleSendShareFromDialog}
+          >
+            <Send className="h-4 w-4" />
+            Enviar ({selectedShareFriendIds.length})
+          </Button>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isComposerOpen} onOpenChange={(open) => (open ? setIsComposerOpen(true) : closeComposer())}>
         <DialogContent className="max-w-md">
