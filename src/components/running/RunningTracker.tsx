@@ -10,6 +10,7 @@ interface Position {
 }
 
 type RunMode = 'outdoor' | 'treadmill';
+type TreadmillDistanceMode = 'manual' | 'speed';
 
 export function RunningTracker() {
   const { addRunSession, runSessions } = useProfile();
@@ -18,7 +19,10 @@ export function RunningTracker() {
   const [isPaused, setIsPaused] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [distance, setDistance] = useState(0);
+  const [treadmillDistanceMode, setTreadmillDistanceMode] = useState<TreadmillDistanceMode>('manual');
   const [treadmillDistanceInput, setTreadmillDistanceInput] = useState('');
+  const [treadmillSpeedInput, setTreadmillSpeedInput] = useState('');
+  const [treadmillSpeed, setTreadmillSpeed] = useState(0);
   const [route, setRoute] = useState<Position[]>([]);
   const [currentPosition, setCurrentPosition] = useState<Position | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -42,6 +46,17 @@ export function RunningTracker() {
       if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isTreadmillMode || treadmillDistanceMode !== 'speed') return;
+
+    if (elapsedTime === 0 || treadmillSpeed <= 0) {
+      setDistance(0);
+      return;
+    }
+
+    setDistance((treadmillSpeed * elapsedTime) / 3600);
+  }, [elapsedTime, isTreadmillMode, treadmillDistanceMode, treadmillSpeed]);
 
   const startRun = () => {
     setIsRunning(true);
@@ -127,6 +142,24 @@ export function RunningTracker() {
       setDistance(parsed);
     }
   };
+
+  const handleTreadmillSpeedChange = (value: string) => {
+    setTreadmillSpeedInput(value);
+    const parsed = Number(value.replace(',', '.'));
+
+    if (!Number.isNaN(parsed) && parsed >= 0) {
+      setTreadmillSpeed(parsed);
+      return;
+    }
+
+    if (!value) {
+      setTreadmillSpeed(0);
+    }
+  };
+
+  const canStartRun = isTreadmillMode
+    ? treadmillDistanceMode === 'manual' || treadmillSpeed > 0
+    : Boolean(currentPosition);
 
   const calculateDistance = (pos1: Position, pos2: Position): number => {
     const R = 6371;
@@ -218,22 +251,63 @@ export function RunningTracker() {
 
       {isTreadmillMode && (
         <div className="stat-card mb-6">
-          <p className="text-sm font-medium mb-2">Distância da esteira (km)</p>
-          <Input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
-            placeholder="Ex: 3.50"
-            value={treadmillDistanceInput}
-            onChange={(event) => handleTreadmillDistanceChange(event.target.value)}
-          />
-          <p className="text-xs text-muted-foreground mt-2">
-            Atualize conforme o painel da esteira para medir o treino.
-          </p>
+          <p className="text-sm font-medium mb-3">Medição da esteira</p>
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            <Button
+              type="button"
+              size="sm"
+              variant={treadmillDistanceMode === 'manual' ? 'energy' : 'outline'}
+              onClick={() => setTreadmillDistanceMode('manual')}
+              disabled={isRunning}
+            >
+              Distância
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={treadmillDistanceMode === 'speed' ? 'energy' : 'outline'}
+              onClick={() => setTreadmillDistanceMode('speed')}
+              disabled={isRunning}
+            >
+              Tempo x Velocidade
+            </Button>
+          </div>
+
+          {treadmillDistanceMode === 'manual' ? (
+            <>
+              <p className="text-sm font-medium mb-2">Distância da esteira (km)</p>
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                placeholder="Ex: 3.50"
+                value={treadmillDistanceInput}
+                onChange={(event) => handleTreadmillDistanceChange(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground mt-2">
+                Atualize conforme o painel da esteira para medir o treino.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium mb-2">Velocidade da esteira (km/h)</p>
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.1"
+                placeholder="Ex: 9.5"
+                value={treadmillSpeedInput}
+                onChange={(event) => handleTreadmillSpeedChange(event.target.value)}
+              />
+              <p className="text-xs text-muted-foreground mt-2">
+                A distância é calculada automaticamente pelo tempo da corrida.
+              </p>
+            </>
+          )}
         </div>
       )}
-
       <div className="grid grid-cols-3 gap-3 mb-6">
         <div className="stat-card text-center">
           <Clock className="w-5 h-5 text-info mx-auto mb-2" />
@@ -263,7 +337,7 @@ export function RunningTracker() {
             size="xl"
             className="flex-1"
             onClick={startRun}
-            disabled={!isTreadmillMode && !currentPosition}
+            disabled={!canStartRun}
           >
             <Play className="w-6 h-6" />
             Iniciar Corrida

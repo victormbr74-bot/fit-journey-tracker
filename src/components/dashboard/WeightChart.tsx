@@ -1,7 +1,7 @@
 import { WeightEntry } from '@/types/user';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 interface WeightChartProps {
   data: WeightEntry[];
@@ -29,13 +29,8 @@ export function WeightChart({ data }: WeightChartProps) {
       ) : (
         <div className="h-48">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData}>
-              <defs>
-                <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="hsl(82 84% 50%)" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="hsl(82 84% 50%)" stopOpacity={0} />
-                </linearGradient>
-              </defs>
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(220 20% 18%)" />
               <XAxis 
                 dataKey="date" 
                 axisLine={false}
@@ -59,14 +54,13 @@ export function WeightChart({ data }: WeightChartProps) {
                 labelStyle={{ color: 'hsl(0 0% 98%)' }}
                 itemStyle={{ color: 'hsl(82 84% 50%)' }}
               />
-              <Area
-                type="monotone"
+              <Bar
                 dataKey="weight"
-                stroke="hsl(82 84% 50%)"
-                strokeWidth={2}
-                fill="url(#weightGradient)"
+                fill="hsl(82 84% 50%)"
+                radius={[6, 6, 0, 0]}
+                maxBarSize={32}
               />
-            </AreaChart>
+            </BarChart>
           </ResponsiveContainer>
         </div>
       )}
