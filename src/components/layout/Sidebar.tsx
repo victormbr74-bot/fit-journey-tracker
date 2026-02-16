@@ -9,6 +9,7 @@ import {
   MapPin,
   Menu,
   MessageCircle,
+  Search,
   Trophy,
   User,
   Users,
@@ -21,8 +22,9 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 
 const navItems = [
   { path: '/dashboard', label: 'HOME FEED', icon: LayoutDashboard },
+  { path: '/search', label: 'PESQUISA', icon: Search },
   { path: '/friends', label: 'AMIGOS', icon: Users },
-  { path: '/clans', label: 'CLÃ', icon: Trophy },
+  { path: '/clans', label: 'CLA', icon: Trophy },
   { path: '/chat', label: 'CHAT', icon: MessageCircle },
   { path: '/notifications', label: 'NOTIFICACOES', icon: Bell },
   { path: '/workout', label: 'TREINO', icon: Dumbbell },

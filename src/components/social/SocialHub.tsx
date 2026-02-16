@@ -37,6 +37,7 @@ import {
   sanitizeHandleBody,
   toHandle,
 } from '@/lib/handleUtils';
+import { supabase } from '@/integrations/supabase/client';
 import { UserProfile } from '@/types/user';
 import {
   SocialClan,
@@ -49,6 +50,7 @@ import {
   SocialGlobalChatEvent,
   SocialNotification,
   SocialNotificationType,
+  SocialPostComment,
   SocialSection,
   SocialState,
   SocialStory,
@@ -97,6 +99,14 @@ const PROFILE_GOAL_LABEL: Record<UserProfile['goal'], string> = {
   endurance: 'Melhorar resistencia',
 };
 
+const resolveGoalLabel = (goal: string | null | undefined) => {
+  if (!goal) return 'Sem meta definida';
+  if (goal in PROFILE_GOAL_LABEL) {
+    return PROFILE_GOAL_LABEL[goal as UserProfile['goal']];
+  }
+  return goal;
+};
+
 const NOTIFICATION_LIMIT = 120;
 const MAX_IMAGE_SIZE = 1080;
 const GLOBAL_FEED_POST_LIMIT = 500;
@@ -130,11 +140,121 @@ const formatDate = (isoDate: string) => {
 
 const isStoryActive = (story: SocialStory) => new Date(story.expiresAt).getTime() > Date.now();
 
-const sanitizeStories = (stories: SocialStory[]) =>
-  stories
-    .filter((story) => story?.id && story.imageDataUrl && isStoryActive(story))
+const sanitizeLikedByHandles = (handles: unknown): string[] => {
+  if (!Array.isArray(handles)) return [];
+  const unique = new Set<string>();
+  handles.forEach((value) => {
+    const normalized = normalizeHandle(value);
+    if (!normalized) return;
+    unique.add(toHandle(normalized));
+  });
+  return Array.from(unique);
+};
+
+const sanitizePostComments = (comments: unknown): SocialPostComment[] => {
+  if (!Array.isArray(comments)) return [];
+
+  return comments
+    .map((comment, index) => {
+      if (!comment || typeof comment !== 'object') return null;
+      const rawComment = comment as Partial<SocialPostComment>;
+
+      const text = rawComment.text?.trim() || '';
+      if (!text) return null;
+
+      const createdAt = rawComment.createdAt && !Number.isNaN(new Date(rawComment.createdAt).getTime())
+        ? rawComment.createdAt
+        : new Date().toISOString();
+      const likedByHandles = sanitizeLikedByHandles(rawComment.likedByHandles);
+      const likes = Math.max(Number(rawComment.likes) || 0, likedByHandles.length);
+
+      return {
+        id: rawComment.id || `comment-${index}-${createId()}`,
+        authorName: rawComment.authorName?.trim() || 'Perfil',
+        authorHandle: toHandle(rawComment.authorHandle || rawComment.authorName || `comment.${index}`),
+        text,
+        createdAt,
+        likes,
+        likedByHandles,
+      } as SocialPostComment;
+    })
+    .filter((comment): comment is SocialPostComment => Boolean(comment))
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+};
+
+const sanitizePosts = (posts: unknown): SocialFeedPost[] => {
+  if (!Array.isArray(posts)) return [];
+
+  return posts
+    .map((post, index) => {
+      if (!post || typeof post !== 'object') return null;
+      const rawPost = post as Partial<SocialFeedPost>;
+      if (!rawPost.id || !rawPost.imageDataUrl) return null;
+
+      const likedByHandles = sanitizeLikedByHandles(rawPost.likedByHandles);
+      const likes = Math.max(Number(rawPost.likes) || 0, likedByHandles.length);
+      const sharedCount = Math.max(Number(rawPost.sharedCount) || 0, 0);
+      const comments = sanitizePostComments(rawPost.comments);
+      const createdAt = rawPost.createdAt && !Number.isNaN(new Date(rawPost.createdAt).getTime())
+        ? rawPost.createdAt
+        : new Date().toISOString();
+
+      return {
+        id: rawPost.id,
+        authorName: rawPost.authorName?.trim() || `Perfil ${index + 1}`,
+        authorHandle: toHandle(rawPost.authorHandle || rawPost.authorName || `post.${index}`),
+        caption: rawPost.caption?.trim() || '',
+        imageDataUrl: rawPost.imageDataUrl,
+        createdAt,
+        likes,
+        likedByHandles,
+        sharedCount,
+        comments,
+      } as SocialFeedPost;
+    })
+    .filter((post): post is SocialFeedPost => Boolean(post))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, GLOBAL_FEED_POST_LIMIT);
+};
+
+const sanitizeStories = (stories: unknown): SocialStory[] => {
+  if (!Array.isArray(stories)) return [];
+
+  return stories
+    .map((story, index) => {
+      if (!story || typeof story !== 'object') return null;
+      const rawStory = story as Partial<SocialStory>;
+      if (!rawStory.id || !rawStory.imageDataUrl) return null;
+
+      const createdAt = rawStory.createdAt && !Number.isNaN(new Date(rawStory.createdAt).getTime())
+        ? rawStory.createdAt
+        : new Date().toISOString();
+      const fallbackExpiresAt = new Date(new Date(createdAt).getTime() + STORY_DURATION_HOURS * 60 * 60 * 1000).toISOString();
+      const expiresAt = rawStory.expiresAt && !Number.isNaN(new Date(rawStory.expiresAt).getTime())
+        ? rawStory.expiresAt
+        : fallbackExpiresAt;
+      const likedByHandles = sanitizeLikedByHandles(rawStory.likedByHandles);
+      const likes = Math.max(Number(rawStory.likes) || 0, likedByHandles.length);
+      const sharedCount = Math.max(Number(rawStory.sharedCount) || 0, 0);
+
+      return {
+        id: rawStory.id,
+        authorName: rawStory.authorName?.trim() || `Perfil ${index + 1}`,
+        authorHandle: toHandle(rawStory.authorHandle || rawStory.authorName || `story.${index}`),
+        caption: rawStory.caption?.trim() || '',
+        imageDataUrl: rawStory.imageDataUrl,
+        createdAt,
+        expiresAt,
+        likes,
+        likedByHandles,
+        sharedCount,
+      } as SocialStory;
+    })
+    .filter((story): story is SocialStory => Boolean(story))
+    .filter((story) => isStoryActive(story))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, GLOBAL_STORY_LIMIT);
+};
 
 const sanitizeFriendRequests = (requests: SocialFriendRequest[]) =>
   requests
@@ -158,6 +278,34 @@ const sanitizeChatEvents = (events: SocialGlobalChatEvent[]) =>
 
 const sanitizeSeenChatEventIds = (eventIds: string[]) =>
   Array.from(new Set(eventIds.filter(Boolean))).slice(-SEEN_CHAT_EVENT_LIMIT);
+
+const sanitizeChatMessages = (messages: unknown): SocialChatMessage[] => {
+  if (!Array.isArray(messages)) return [];
+
+  return messages
+    .map((message) => {
+      if (!message || typeof message !== 'object') return null;
+      const rawMessage = message as Partial<SocialChatMessage>;
+      if (!rawMessage.id || !rawMessage.friendId) return null;
+
+      const createdAt = rawMessage.createdAt && !Number.isNaN(new Date(rawMessage.createdAt).getTime())
+        ? rawMessage.createdAt
+        : new Date().toISOString();
+
+      return {
+        id: rawMessage.id,
+        friendId: rawMessage.friendId,
+        sender: rawMessage.sender === 'friend' ? 'friend' : 'me',
+        text: rawMessage.text?.toString() || '',
+        createdAt,
+        postId: rawMessage.postId,
+        storyId: rawMessage.storyId,
+        externalEventId: rawMessage.externalEventId,
+      } as SocialChatMessage;
+    })
+    .filter((message): message is SocialChatMessage => Boolean(message))
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+};
 
 const convertImageToDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -198,7 +346,7 @@ const dataUrlToFile = async (dataUrl: string, filename: string): Promise<File> =
 
 const notificationTypeLabel: Record<SocialNotificationType, string> = {
   friend: 'Seguindo',
-  clan: 'CLÃ',
+  clan: 'CLA',
   goal: 'Meta',
   challenge: 'Desafio',
   post: 'Feed',
@@ -208,7 +356,7 @@ const notificationTypeLabel: Record<SocialNotificationType, string> = {
 
 const mergePosts = (...lists: SocialFeedPost[][]): SocialFeedPost[] => {
   const map = new Map<string, SocialFeedPost>();
-  lists.flat().forEach((post) => {
+  sanitizePosts(lists.flat()).forEach((post) => {
     const previous = map.get(post.id);
     if (!previous) {
       map.set(post.id, post);
@@ -254,6 +402,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [friendName, setFriendName] = useState('');
   const [friendHandle, setFriendHandle] = useState('');
   const [friendGoal, setFriendGoal] = useState('');
+  const [remoteDiscoverableProfiles, setRemoteDiscoverableProfiles] = useState<DiscoverableProfile[]>([]);
+  const [isSearchingProfiles, setIsSearchingProfiles] = useState(false);
 
   const [clanName, setClanName] = useState('');
   const [clanDescription, setClanDescription] = useState('');
@@ -278,9 +428,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [sharePostId, setSharePostId] = useState('');
+  const [shareStoryId, setShareStoryId] = useState('');
   const [shareSearch, setShareSearch] = useState('');
   const [shareMessage, setShareMessage] = useState('');
   const [selectedShareFriendIds, setSelectedShareFriendIds] = useState<string[]>([]);
+  const [postCommentInputs, setPostCommentInputs] = useState<Record<string, string>>({});
 
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [composerMode, setComposerMode] = useState<'post' | 'story'>('post');
@@ -334,7 +486,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     if (storedGlobalPosts) {
       try {
         const parsed = JSON.parse(storedGlobalPosts) as SocialFeedPost[];
-        setGlobalPosts(Array.isArray(parsed) ? parsed : []);
+        setGlobalPosts(sanitizePosts(parsed));
       } catch (error) {
         console.error('Erro ao carregar feed global:', error);
         setGlobalPosts([]);
@@ -400,7 +552,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   useEffect(() => {
     window.localStorage.setItem(
       SOCIAL_GLOBAL_FEED_STORAGE_KEY,
-      JSON.stringify(globalPosts.slice(0, GLOBAL_FEED_POST_LIMIT))
+      JSON.stringify(sanitizePosts(globalPosts))
     );
   }, [globalPosts]);
 
@@ -439,7 +591,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       if (event.key === SOCIAL_GLOBAL_FEED_STORAGE_KEY) {
         try {
           const parsed = event.newValue ? (JSON.parse(event.newValue) as SocialFeedPost[]) : [];
-          setGlobalPosts(Array.isArray(parsed) ? parsed : []);
+          setGlobalPosts(sanitizePosts(parsed));
         } catch (error) {
           console.error('Erro ao sincronizar feed global:', error);
         }
@@ -526,7 +678,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         friends: parsedFriends,
         clans: parsed.clans || [],
         posts: [],
-        chatMessages: parsed.chatMessages || [],
+        chatMessages: sanitizeChatMessages(parsed.chatMessages),
         notifications: parsed.notifications || [],
       });
       if (legacyPosts.length) {
@@ -618,7 +770,59 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   const friendHandleSearch = useMemo(() => sanitizeHandleInput(friendHandle), [friendHandle]);
 
-  const discoverableProfiles = useMemo(() => {
+  useEffect(() => {
+    if (!friendHandleSearch) {
+      setRemoteDiscoverableProfiles([]);
+      setIsSearchingProfiles(false);
+      return;
+    }
+
+    let canceled = false;
+    const searchTimer = window.setTimeout(async () => {
+      setIsSearchingProfiles(true);
+      const { data, error } = await supabase.rpc('search_profiles_by_handle', {
+        query_text: friendHandleSearch,
+        limit_count: 12,
+        exclude_profile_id: profile.id,
+      });
+
+      if (canceled) return;
+
+      if (error) {
+        console.error('Erro ao buscar perfis por @usuario:', error);
+        setRemoteDiscoverableProfiles([]);
+        setIsSearchingProfiles(false);
+        return;
+      }
+
+      const parsedProfiles = Array.isArray(data)
+        ? data
+            .map((item) => {
+              const normalizedHandle = normalizeHandle(item.handle);
+              if (!normalizedHandle || normalizedHandle === normalizedProfileHandle) return null;
+
+              const fallbackName = item.name?.trim() || toHandle(item.handle);
+              return {
+                handle: toHandle(item.handle),
+                normalizedHandle,
+                name: fallbackName,
+                goal: resolveGoalLabel(item.goal),
+              } as DiscoverableProfile;
+            })
+            .filter((item): item is DiscoverableProfile => Boolean(item))
+        : [];
+
+      setRemoteDiscoverableProfiles(parsedProfiles);
+      setIsSearchingProfiles(false);
+    }, 220);
+
+    return () => {
+      canceled = true;
+      window.clearTimeout(searchTimer);
+    };
+  }, [friendHandleSearch, normalizedProfileHandle, profile.id]);
+
+  const localDiscoverableProfiles = useMemo(() => {
     const catalog = new Map<string, DiscoverableProfile>();
 
     const registerProfile = (rawName: string, rawHandle: string, rawGoal?: string) => {
@@ -658,8 +862,40 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     return Array.from(catalog.values()).sort((a, b) => a.handle.localeCompare(b.handle));
   }, [friendRequests, globalPosts, globalStories, normalizedProfileHandle, socialState.friends]);
 
+  const discoverableProfiles = useMemo(() => {
+    const catalog = new Map<string, DiscoverableProfile>();
+
+    const registerProfile = (candidate: DiscoverableProfile) => {
+      const normalizedHandle = sanitizeHandleInput(candidate.handle);
+      if (!normalizedHandle || normalizedHandle === normalizedProfileHandle) return;
+
+      const current = catalog.get(normalizedHandle);
+      if (!current) {
+        catalog.set(normalizedHandle, {
+          ...candidate,
+          handle: toHandle(candidate.handle),
+          normalizedHandle,
+          goal: candidate.goal?.trim() || 'Sem meta definida',
+        });
+        return;
+      }
+
+      if (current.name.startsWith('@') && !candidate.name.startsWith('@')) {
+        current.name = candidate.name;
+      }
+      if (current.goal === 'Sem meta definida' && candidate.goal !== 'Sem meta definida') {
+        current.goal = candidate.goal;
+      }
+    };
+
+    localDiscoverableProfiles.forEach(registerProfile);
+    remoteDiscoverableProfiles.forEach(registerProfile);
+
+    return Array.from(catalog.values()).sort((a, b) => a.handle.localeCompare(b.handle));
+  }, [localDiscoverableProfiles, normalizedProfileHandle, remoteDiscoverableProfiles]);
+
   const filteredDiscoverableProfiles = useMemo(() => {
-    if (!friendHandle.startsWith('@')) return [];
+    if (!friendHandle.trim()) return [];
     if (!friendHandleSearch) return discoverableProfiles.slice(0, 8);
 
     return discoverableProfiles
@@ -744,9 +980,19 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     [globalPosts]
   );
 
+  const storiesById = useMemo(
+    () => new Map(sanitizeStories(globalStories).map((story) => [story.id, story])),
+    [globalStories]
+  );
+
   const sharePost = useMemo(
     () => globalPosts.find((post) => post.id === sharePostId) ?? null,
     [globalPosts, sharePostId]
+  );
+
+  const shareStory = useMemo(
+    () => sanitizeStories(globalStories).find((story) => story.id === shareStoryId) ?? null,
+    [globalStories, shareStoryId]
   );
 
   const filteredShareFriends = useMemo(() => {
@@ -827,6 +1073,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         text: event.text,
         createdAt: event.createdAt,
         postId: event.postId,
+        storyId: event.storyId,
         externalEventId: event.id,
       });
     });
@@ -874,11 +1121,27 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   useEffect(() => {
     if (!isShareDialogOpen) return;
-    if (!sharePostId) return;
-    if (globalPosts.some((post) => post.id === sharePostId)) return;
-    setIsShareDialogOpen(false);
-    setSharePostId('');
-  }, [globalPosts, isShareDialogOpen, sharePostId]);
+    if (sharePostId) {
+      if (globalPosts.some((post) => post.id === sharePostId)) return;
+      setIsShareDialogOpen(false);
+      setSharePostId('');
+      setShareStoryId('');
+      setShareSearch('');
+      setShareMessage('');
+      setSelectedShareFriendIds([]);
+      return;
+    }
+
+    if (shareStoryId) {
+      if (storiesById.has(shareStoryId)) return;
+      setIsShareDialogOpen(false);
+      setSharePostId('');
+      setShareStoryId('');
+      setShareSearch('');
+      setShareMessage('');
+      setSelectedShareFriendIds([]);
+    }
+  }, [globalPosts, isShareDialogOpen, sharePostId, shareStoryId, storiesById]);
 
   useEffect(() => {
     const container = chatMessagesContainerRef.current;
@@ -919,6 +1182,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     const receiverHandleValue = sanitizeHandleInput(friendHandle);
     if (!receiverHandleValue) {
       toast.error('Informe o @usuario para seguir.');
+      return;
+    }
+    if (receiverHandleValue.length < 3) {
+      toast.error('Digite pelo menos 3 caracteres do @usuario.');
       return;
     }
 
@@ -972,7 +1239,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       senderHandle: profileHandle,
       senderGoal: PROFILE_GOAL_LABEL[profile.goal],
       receiverName,
-      receiverHandle: toHandle(receiverHandleValue),
+      receiverHandle: `@${receiverHandleValue}`,
       receiverGoal: receiverGoalLabel,
       status: 'pending',
       createdAt: new Date().toISOString(),
@@ -1078,7 +1345,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const handleCreateClan = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!clanName.trim()) {
-      toast.error('Defina um nome para o CLÃ.');
+      toast.error('Defina um nome para o CLA.');
       return;
     }
     if (!clanMemberIds.length) {
@@ -1099,14 +1366,14 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setSocialState((prev) => ({ ...prev, clans: [nextClan, ...prev.clans] }));
     pushNotification({
       type: 'clan',
-      title: 'CLÃ criado',
+      title: 'CLA criado',
       description: `${nextClan.name} pronto para metas coletivas.`,
     });
 
     setClanName('');
     setClanDescription('');
     setClanMemberIds([]);
-    toast.success('CLÃ criado.');
+    toast.success('CLA criado.');
   };
 
   const handleCreateGoal = (event: FormEvent<HTMLFormElement>) => {
@@ -1279,7 +1546,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         imageDataUrl: composerImageDataUrl,
         createdAt: new Date().toISOString(),
         likes: 0,
+        likedByHandles: [],
         sharedCount: 0,
+        comments: [],
       };
 
       setGlobalPosts((previous) => mergePosts([nextPost], previous));
@@ -1304,6 +1573,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       imageDataUrl: composerImageDataUrl,
       createdAt: createdAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
+      likes: 0,
+      likedByHandles: [],
+      sharedCount: 0,
     };
 
     setGlobalStories((previous) => sanitizeStories([nextStory, ...previous]));
@@ -1318,7 +1590,96 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   const handleLikePost = (postId: string) => {
     setGlobalPosts((previous) =>
-      previous.map((post) => (post.id === postId ? { ...post, likes: post.likes + 1 } : post))
+      previous.map((post) => {
+        if (post.id !== postId) return post;
+        const likedBySet = new Set(post.likedByHandles.map((handle) => normalizeHandle(handle)));
+        if (likedBySet.has(normalizedProfileHandle)) {
+          likedBySet.delete(normalizedProfileHandle);
+        } else {
+          likedBySet.add(normalizedProfileHandle);
+        }
+        const likedByHandles = Array.from(likedBySet).map((handle) => toHandle(handle));
+        return {
+          ...post,
+          likedByHandles,
+          likes: likedByHandles.length,
+        };
+      })
+    );
+  };
+
+  const handleAddPostComment = (postId: string) => {
+    const text = (postCommentInputs[postId] || '').trim();
+    if (!text) return;
+
+    const nextComment: SocialPostComment = {
+      id: createId(),
+      authorName: profile.name,
+      authorHandle: profileHandle,
+      text,
+      createdAt: new Date().toISOString(),
+      likes: 0,
+      likedByHandles: [],
+    };
+
+    setGlobalPosts((previous) =>
+      previous.map((post) =>
+        post.id === postId
+          ? { ...post, comments: [...post.comments, nextComment] }
+          : post
+      )
+    );
+    setPostCommentInputs((previous) => ({ ...previous, [postId]: '' }));
+    toast.success('Comentario publicado.');
+  };
+
+  const handleLikeComment = (postId: string, commentId: string) => {
+    setGlobalPosts((previous) =>
+      previous.map((post) => {
+        if (post.id !== postId) return post;
+        return {
+          ...post,
+          comments: post.comments.map((comment) => {
+            if (comment.id !== commentId) return comment;
+
+            const likedBySet = new Set(
+              comment.likedByHandles.map((handle) => normalizeHandle(handle))
+            );
+            if (likedBySet.has(normalizedProfileHandle)) {
+              likedBySet.delete(normalizedProfileHandle);
+            } else {
+              likedBySet.add(normalizedProfileHandle);
+            }
+
+            const likedByHandles = Array.from(likedBySet).map((handle) => toHandle(handle));
+            return {
+              ...comment,
+              likedByHandles,
+              likes: likedByHandles.length,
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  const handleLikeStory = (storyId: string) => {
+    setGlobalStories((previous) =>
+      previous.map((story) => {
+        if (story.id !== storyId) return story;
+        const likedBySet = new Set(story.likedByHandles.map((handle) => normalizeHandle(handle)));
+        if (likedBySet.has(normalizedProfileHandle)) {
+          likedBySet.delete(normalizedProfileHandle);
+        } else {
+          likedBySet.add(normalizedProfileHandle);
+        }
+        const likedByHandles = Array.from(likedBySet).map((handle) => toHandle(handle));
+        return {
+          ...story,
+          likedByHandles,
+          likes: likedByHandles.length,
+        };
+      })
     );
   };
 
@@ -1330,32 +1691,58 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     );
   };
 
-  const buildShareText = (post: SocialFeedPost) =>
+  const markStoryAsShared = (storyId: string) => {
+    setGlobalStories((previous) =>
+      previous.map((story) =>
+        story.id === storyId ? { ...story, sharedCount: story.sharedCount + 1 } : story
+      )
+    );
+  };
+
+  const buildPostShareText = (post: SocialFeedPost) =>
     `${post.caption}\n\nCompartilhado via FitTrack ${post.authorHandle}\n#FitTrack #JornadaFitness`;
 
-  const handleShareOnWhatsApp = (post: SocialFeedPost) => {
-    const url = `https://wa.me/?text=${encodeURIComponent(buildShareText(post))}`;
+  const buildStoryShareText = (story: SocialStory) =>
+    `${story.caption || 'Story compartilhada'}\n\nStory de ${story.authorHandle} no FitTrack\n#FitTrack #Story`;
+
+  const handleShareOnWhatsApp = (item: SocialFeedPost | SocialStory, type: 'post' | 'story') => {
+    const text = type === 'post' ? buildPostShareText(item) : buildStoryShareText(item);
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
     const popup = window.open(url, '_blank', 'noopener,noreferrer');
     if (!popup) {
       toast.error('Nao foi possivel abrir o WhatsApp. Verifique o bloqueio de pop-up.');
       return;
     }
-    markPostAsShared(post.id);
+    if (type === 'post') {
+      markPostAsShared(item.id);
+    } else {
+      markStoryAsShared(item.id);
+    }
     toast.success('Abrindo WhatsApp.');
   };
 
-  const handleShareOnInstagram = async (post: SocialFeedPost) => {
-    const text = buildShareText(post);
+  const handleShareOnInstagram = async (
+    item: SocialFeedPost | SocialStory,
+    type: 'post' | 'story'
+  ) => {
+    const text = type === 'post' ? buildPostShareText(item) : buildStoryShareText(item);
     if (navigator.share) {
       try {
-        const file = await dataUrlToFile(post.imageDataUrl, `fittrack-post-${post.id}.jpg`);
+        const file = await dataUrlToFile(
+          item.imageDataUrl,
+          type === 'post' ? `fittrack-post-${item.id}.jpg` : `fittrack-story-${item.id}.jpg`
+        );
         const canShareWithFile = typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
         if (canShareWithFile) {
           await navigator.share({ title: 'Meu progresso no FitTrack', text, files: [file] });
         } else {
           await navigator.share({ title: 'Meu progresso no FitTrack', text });
         }
-        markPostAsShared(post.id);
+        if (type === 'post') {
+          markPostAsShared(item.id);
+        } else {
+          markStoryAsShared(item.id);
+        }
         toast.success('Compartilhamento iniciado.');
         return;
       } catch (error) {
@@ -1376,16 +1763,25 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       toast.error('Nao foi possivel abrir o Instagram. Verifique o bloqueio de pop-up.');
       return;
     }
-    markPostAsShared(post.id);
+    if (type === 'post') {
+      markPostAsShared(item.id);
+    } else {
+      markStoryAsShared(item.id);
+    }
   };
 
-  const handleCopyPostText = async (post: SocialFeedPost) => {
+  const handleCopyShareText = async (item: SocialFeedPost | SocialStory, type: 'post' | 'story') => {
     try {
-      await navigator.clipboard.writeText(buildShareText(post));
-      toast.success('Texto do post copiado.');
+      const text = type === 'post' ? buildPostShareText(item) : buildStoryShareText(item);
+      await navigator.clipboard.writeText(text);
+      toast.success(type === 'post' ? 'Texto do post copiado.' : 'Texto da story copiado.');
     } catch (error) {
       console.error('Erro ao copiar texto:', error);
-      toast.error('Nao foi possivel copiar o texto do post.');
+      toast.error(
+        type === 'post'
+          ? 'Nao foi possivel copiar o texto do post.'
+          : 'Nao foi possivel copiar o texto da story.'
+      );
     }
   };
 
@@ -1400,7 +1796,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }));
   };
 
-  const sendMessageToFollowedProfile = (friendId: string, text: string, postId?: string) => {
+  const sendMessageToFollowedProfile = (
+    friendId: string,
+    text: string,
+    postId?: string,
+    storyId?: string
+  ) => {
     const friend = friendsById.get(friendId);
     if (!friend) return false;
 
@@ -1412,6 +1813,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       text,
       createdAt,
       postId,
+      storyId,
     });
 
     appendGlobalChatEvent({
@@ -1423,6 +1825,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       text,
       createdAt,
       postId,
+      storyId,
     });
 
     return true;
@@ -1481,17 +1884,66 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }, false);
   };
 
+  const handleShareStoryWithFriend = (
+    story: SocialStory,
+    friendId?: string,
+    customMessage?: string
+  ) => {
+    const resolvedFriendId = friendId || feedShareFriendId || activeChatFriendId;
+    if (!resolvedFriendId) {
+      toast.error('Selecione quem voce segue para compartilhar.');
+      return;
+    }
+
+    const friend = friendsById.get(resolvedFriendId);
+    if (!friend) {
+      toast.error('Perfil selecionado nao encontrado.');
+      return;
+    }
+
+    const storyText = story.caption || 'Story compartilhada';
+    const text = customMessage?.trim()
+      ? `${customMessage.trim()}\n\nCompartilhei esta story com voce: ${storyText}`
+      : `Compartilhei esta story com voce: ${storyText}`;
+
+    const wasSent = sendMessageToFollowedProfile(resolvedFriendId, text, undefined, story.id);
+    if (!wasSent) {
+      toast.error('Nao foi possivel compartilhar no chat.');
+      return;
+    }
+
+    markStoryAsShared(story.id);
+    setActiveChatFriendId(resolvedFriendId);
+    pushNotification({
+      type: 'chat',
+      title: 'Story compartilhada',
+      description: `${friend?.name || 'Contato'} recebeu uma story sua.`,
+    }, false);
+  };
+
   const openShareDialog = (post: SocialFeedPost) => {
     setSharePostId(post.id);
+    setShareStoryId('');
     setShareSearch('');
     setShareMessage('');
     setSelectedShareFriendIds(feedShareFriendId ? [feedShareFriendId] : []);
     setIsShareDialogOpen(true);
   };
 
+  const openStoryShareDialog = (story: SocialStory) => {
+    setShareStoryId(story.id);
+    setSharePostId('');
+    setShareSearch('');
+    setShareMessage('');
+    setSelectedShareFriendIds(feedShareFriendId ? [feedShareFriendId] : []);
+    setIsShareDialogOpen(true);
+    setActiveStoryId('');
+  };
+
   const closeShareDialog = () => {
     setIsShareDialogOpen(false);
     setSharePostId('');
+    setShareStoryId('');
     setShareSearch('');
     setShareMessage('');
     setSelectedShareFriendIds([]);
@@ -1506,24 +1958,40 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   };
 
   const handleSendShareFromDialog = () => {
-    if (!sharePost) {
-      toast.error('Selecione um post para compartilhar.');
-      return;
-    }
     if (!selectedShareFriendIds.length) {
       toast.error('Selecione ao menos um perfil para compartilhar.');
       return;
     }
 
-    selectedShareFriendIds.forEach((friendId) =>
-      handleSharePostWithFriend(sharePost, friendId, shareMessage)
-    );
+    if (sharePost) {
+      selectedShareFriendIds.forEach((friendId) =>
+        handleSharePostWithFriend(sharePost, friendId, shareMessage)
+      );
 
-    toast.success(
-      selectedShareFriendIds.length > 1
-        ? 'Post enviado para os perfis selecionados.'
-        : 'Post enviado no chat.'
-    );
+      toast.success(
+        selectedShareFriendIds.length > 1
+          ? 'Post enviado para os perfis selecionados.'
+          : 'Post enviado no chat.'
+      );
+      closeShareDialog();
+      return;
+    }
+
+    if (shareStory) {
+      selectedShareFriendIds.forEach((friendId) =>
+        handleShareStoryWithFriend(shareStory, friendId, shareMessage)
+      );
+
+      toast.success(
+        selectedShareFriendIds.length > 1
+          ? 'Story enviada para os perfis selecionados.'
+          : 'Story enviada no chat.'
+      );
+      closeShareDialog();
+      return;
+    }
+
+    toast.error('Selecione um post ou story para compartilhar.');
     closeShareDialog();
   };
 
@@ -1576,14 +2044,104 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         className="space-y-4"
       >
         {showSectionTabs && (
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-5">
-            <TabsTrigger value="friends" className="py-2 text-xs md:text-sm">Seguindo</TabsTrigger>
-            <TabsTrigger value="clans" className="py-2 text-xs md:text-sm">CLÃ</TabsTrigger>
-            <TabsTrigger value="chat" className="py-2 text-xs md:text-sm">Chat</TabsTrigger>
-            <TabsTrigger value="feed" className="py-2 text-xs md:text-sm">Feed</TabsTrigger>
-            <TabsTrigger value="notifications" className="py-2 text-xs md:text-sm">Notificacoes</TabsTrigger>
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-6">
+            <TabsTrigger value="search" className="py-2 text-xs md:text-sm">
+              <Search className="mr-1 h-4 w-4" />
+              Pesquisa
+            </TabsTrigger>
+            <TabsTrigger value="friends" className="py-2 text-xs md:text-sm">
+              <Users className="mr-1 h-4 w-4" />
+              Seguindo
+            </TabsTrigger>
+            <TabsTrigger value="clans" className="py-2 text-xs md:text-sm">
+              <Trophy className="mr-1 h-4 w-4" />
+              CLA
+            </TabsTrigger>
+            <TabsTrigger value="chat" className="py-2 text-xs md:text-sm">
+              <MessageCircle className="mr-1 h-4 w-4" />
+              Chat
+            </TabsTrigger>
+            <TabsTrigger value="feed" className="py-2 text-xs md:text-sm">
+              <ImagePlus className="mr-1 h-4 w-4" />
+              Feed
+            </TabsTrigger>
+            <TabsTrigger value="notifications" className="py-2 text-xs md:text-sm">
+              <BellRing className="mr-1 h-4 w-4" />
+              Notificacoes
+            </TabsTrigger>
           </TabsList>
         )}
+
+        <TabsContent value="search" className="space-y-4">
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle className="text-lg">Pesquisar usuarios</CardTitle>
+              <CardDescription>
+                Comece a digitar o @usuario para ver perfis correspondentes.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form className="space-y-3" onSubmit={handleAddFriend}>
+                <div className="space-y-2">
+                  <Label htmlFor="friend-handle-search">Buscar por @usuario</Label>
+                  <Input
+                    id="friend-handle-search"
+                    value={friendHandle}
+                    onChange={handleFriendHandleChange}
+                    placeholder="@anafit"
+                    autoComplete="off"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Digite para filtrar em tempo real.
+                  </p>
+                  {isSearchingProfiles && (
+                    <p className="text-xs text-muted-foreground">Buscando perfis...</p>
+                  )}
+                  {!!friendHandle.trim() && !isSearchingProfiles && !filteredDiscoverableProfiles.length && (
+                    <p className="text-xs text-muted-foreground">Nenhum perfil encontrado.</p>
+                  )}
+                  {!!filteredDiscoverableProfiles.length && (
+                    <div className="max-h-52 overflow-y-auto rounded-lg border border-border/70 bg-card/50 p-1">
+                      {filteredDiscoverableProfiles.map((candidate) => (
+                        <button
+                          key={candidate.normalizedHandle}
+                          type="button"
+                          onClick={() => handleSelectDiscoverableProfile(candidate)}
+                          className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-secondary/60"
+                        >
+                          <span className="line-clamp-1 text-sm font-medium">{candidate.name}</span>
+                          <span className="text-xs text-muted-foreground">{candidate.handle}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="friend-name-search">Nome (opcional)</Label>
+                  <Input
+                    id="friend-name-search"
+                    value={friendName}
+                    onChange={(event) => setFriendName(event.target.value)}
+                    placeholder="Nome do perfil (opcional)"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="friend-goal-search">Objetivo do perfil</Label>
+                  <Input
+                    id="friend-goal-search"
+                    value={friendGoal}
+                    onChange={(event) => setFriendGoal(event.target.value)}
+                    placeholder="Ex: correr 5 km"
+                  />
+                </div>
+                <Button type="submit" variant="energy" className="w-full">
+                  <UserPlus className="h-4 w-4" />
+                  Enviar pedido para seguir
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="friends" className="space-y-4">
           <Card className="glass-card">
@@ -1604,7 +2162,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     placeholder="@anafit"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Digite "@" para ver sugestoes de perfis.
+                    Digite para ver sugestoes de perfis em tempo real.
                   </p>
                   {!!filteredDiscoverableProfiles.length && (
                     <div className="max-h-40 overflow-y-auto rounded-lg border border-border/70 bg-card/50 p-1">
@@ -1727,13 +2285,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         <TabsContent value="clans" className="space-y-4">
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle className="text-lg">Criacao de CLÃ</CardTitle>
+              <CardTitle className="text-lg">Criacao de CLA</CardTitle>
               <CardDescription>Adicione perfis que voce segue e defina metas e desafios juntos.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 xl:grid-cols-2">
               <form className="space-y-3" onSubmit={handleCreateClan}>
                 <div className="space-y-2">
-                  <Label htmlFor="clan-name">Nome do CLÃ</Label>
+                  <Label htmlFor="clan-name">Nome do CLA</Label>
                   <Input id="clan-name" value={clanName} onChange={(event) => setClanName(event.target.value)} />
                 </div>
                 <div className="space-y-2">
@@ -1754,7 +2312,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                 </div>
                 <Button type="submit" variant="energy" className="w-full">
                   <Users className="h-4 w-4" />
-                  Criar CLÃ
+                  Criar CLA
                 </Button>
               </form>
 
@@ -1766,7 +2324,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     value={goalClanId}
                     onChange={(event) => setGoalClanId(event.target.value)}
                   >
-                    {!socialState.clans.length && <option value="">Nenhum CLÃ</option>}
+                    {!socialState.clans.length && <option value="">Nenhum CLA</option>}
                     {socialState.clans.map((clan) => (
                       <option key={clan.id} value={clan.id}>{clan.name}</option>
                     ))}
@@ -1790,7 +2348,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     value={challengeClanId}
                     onChange={(event) => setChallengeClanId(event.target.value)}
                   >
-                    {!socialState.clans.length && <option value="">Nenhum CLÃ</option>}
+                    {!socialState.clans.length && <option value="">Nenhum CLA</option>}
                     {socialState.clans.map((clan) => (
                       <option key={clan.id} value={clan.id}>{clan.name}</option>
                     ))}
@@ -1812,10 +2370,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle className="text-lg">CLÃs criados</CardTitle>
+              <CardTitle className="text-lg">CLAs criados</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!socialState.clans.length && <p className="text-sm text-muted-foreground">Nenhum CLÃ criado.</p>}
+              {!socialState.clans.length && <p className="text-sm text-muted-foreground">Nenhum CLA criado.</p>}
               {socialState.clans.map((clan) => (
                 <div key={clan.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
                   <div className="flex items-start justify-between gap-2">
@@ -1924,6 +2482,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     )}
                     {activeChatMessages.map((message) => {
                       const sharedPost = message.postId ? postsById.get(message.postId) : null;
+                      const sharedStory = message.storyId ? storiesById.get(message.storyId) : null;
                       const isMine = message.sender === 'me';
                       return (
                         <div key={message.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
@@ -1943,6 +2502,18 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                   className="h-24 w-full rounded-md object-cover"
                                 />
                                 <p className="mt-1 text-xs text-slate-200 line-clamp-2">{sharedPost.caption}</p>
+                              </div>
+                            )}
+                            {!sharedPost && sharedStory && (
+                              <div className="mt-2 rounded-md border border-white/20 bg-black/20 p-2">
+                                <img
+                                  src={sharedStory.imageDataUrl}
+                                  alt={`Story de ${sharedStory.authorName}`}
+                                  className="h-24 w-full rounded-md object-cover"
+                                />
+                                <p className="mt-1 text-xs text-slate-200 line-clamp-2">
+                                  Story: {sharedStory.caption || 'Sem legenda'}
+                                </p>
                               </div>
                             )}
                             <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-slate-200">
@@ -2066,6 +2637,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       />
                     </div>
                     <span className="line-clamp-1 text-xs">{story.authorName.split(' ')[0]}</span>
+                    <span className="text-[10px] text-muted-foreground">{story.likes} curtidas</span>
                   </button>
                 ))}
               </div>
@@ -2094,7 +2666,18 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                   <img src={post.imageDataUrl} alt={`Post de ${post.authorName}`} className="w-full max-h-[420px] object-cover rounded-lg border border-border/70" />
                   <p className="text-sm">{post.caption}</p>
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" size="sm" variant="outline" onClick={() => handleLikePost(post.id)}>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={
+                        post.likedByHandles.some(
+                          (handle) => normalizeHandle(handle) === normalizedProfileHandle
+                        )
+                          ? 'default'
+                          : 'outline'
+                      }
+                      onClick={() => handleLikePost(post.id)}
+                    >
                       <Heart className="h-4 w-4" />
                       Curtir ({post.likes})
                     </Button>
@@ -2107,6 +2690,69 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       <Share2 className="h-4 w-4" />
                       Compartilhar
                     </Button>
+                  </div>
+                  <div className="space-y-2 rounded-md border border-border/60 bg-background/40 p-2">
+                    <p className="text-xs text-muted-foreground">
+                      {post.comments.length} comentario(s)
+                    </p>
+                    {!post.comments.length && (
+                      <p className="text-xs text-muted-foreground">Seja o primeiro a comentar.</p>
+                    )}
+                    {post.comments.map((comment) => {
+                      const likedCommentByMe = comment.likedByHandles.some(
+                        (handle) => normalizeHandle(handle) === normalizedProfileHandle
+                      );
+                      return (
+                        <div key={comment.id} className="rounded-md border border-border/60 bg-card/50 p-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-semibold">
+                                {comment.authorName} <span className="text-muted-foreground">{comment.authorHandle}</span>
+                              </p>
+                              <p className="text-sm">{comment.text}</p>
+                              <p className="text-[11px] text-muted-foreground">{formatDateTime(comment.createdAt)}</p>
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={likedCommentByMe ? 'default' : 'outline'}
+                              onClick={() => handleLikeComment(post.id, comment.id)}
+                            >
+                              <Heart className="h-3.5 w-3.5" />
+                              {comment.likes}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <form
+                      className="flex items-center gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        handleAddPostComment(post.id);
+                      }}
+                    >
+                      <Input
+                        value={postCommentInputs[post.id] || ''}
+                        onChange={(event) =>
+                          setPostCommentInputs((previous) => ({
+                            ...previous,
+                            [post.id]: event.target.value,
+                          }))
+                        }
+                        placeholder="Escreva um comentario..."
+                        className="h-9"
+                      />
+                      <Button
+                        type="submit"
+                        size="sm"
+                        variant="outline"
+                        disabled={!(postCommentInputs[post.id] || '').trim()}
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        Comentar
+                      </Button>
+                    </form>
                   </div>
                 </div>
               ))}
@@ -2211,6 +2857,23 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               </div>
             </div>
           )}
+          {!sharePost && shareStory && (
+            <div className="rounded-lg border border-border/70 bg-card/40 p-2">
+              <div className="flex items-center gap-3">
+                <img
+                  src={shareStory.imageDataUrl}
+                  alt={`Story de ${shareStory.authorName}`}
+                  className="h-14 w-14 rounded-md object-cover"
+                />
+                <div>
+                  <p className="text-sm font-medium line-clamp-1">{shareStory.authorName}</p>
+                  <p className="text-xs text-muted-foreground line-clamp-2">
+                    {shareStory.caption || 'Story sem legenda'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="share-search">Pesquisar perfil</Label>
@@ -2272,8 +2935,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             <Button
               type="button"
               variant="outline"
-              onClick={() => sharePost && handleShareOnInstagram(sharePost)}
-              disabled={!sharePost}
+              onClick={() =>
+                sharePost
+                  ? handleShareOnInstagram(sharePost, 'post')
+                  : shareStory && handleShareOnInstagram(shareStory, 'story')
+              }
+              disabled={!sharePost && !shareStory}
             >
               <Instagram className="h-4 w-4" />
               Instagram
@@ -2281,8 +2948,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             <Button
               type="button"
               variant="outline"
-              onClick={() => sharePost && handleShareOnWhatsApp(sharePost)}
-              disabled={!sharePost}
+              onClick={() =>
+                sharePost
+                  ? handleShareOnWhatsApp(sharePost, 'post')
+                  : shareStory && handleShareOnWhatsApp(shareStory, 'story')
+              }
+              disabled={!sharePost && !shareStory}
             >
               <MessageCircle className="h-4 w-4" />
               WhatsApp
@@ -2290,8 +2961,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             <Button
               type="button"
               variant="outline"
-              onClick={() => sharePost && handleCopyPostText(sharePost)}
-              disabled={!sharePost}
+              onClick={() =>
+                sharePost
+                  ? handleCopyShareText(sharePost, 'post')
+                  : shareStory && handleCopyShareText(shareStory, 'story')
+              }
+              disabled={!sharePost && !shareStory}
             >
               <Copy className="h-4 w-4" />
               Copiar
@@ -2302,7 +2977,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             type="button"
             variant="energy"
             className="w-full"
-            disabled={!sharePost || !selectedShareFriendIds.length}
+            disabled={(!sharePost && !shareStory) || !selectedShareFriendIds.length}
             onClick={handleSendShareFromDialog}
           >
             <Send className="h-4 w-4" />
@@ -2400,11 +3075,44 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                 <p className="font-semibold">{activeStory.authorName}</p>
                 <p className="text-xs">{formatDateTime(activeStory.createdAt)}</p>
               </div>
-              {!!activeStory.caption && (
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 text-white">
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 text-white space-y-3">
+                {!!activeStory.caption && (
                   <p className="text-sm">{activeStory.caption}</p>
+                )}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={
+                        activeStory.likedByHandles.some(
+                          (handle) => normalizeHandle(handle) === normalizedProfileHandle
+                        )
+                          ? 'default'
+                          : 'outline'
+                      }
+                      className="h-8 border-white/40 bg-black/30 text-white hover:bg-black/45"
+                      onClick={() => handleLikeStory(activeStory.id)}
+                    >
+                      <Heart className="h-3.5 w-3.5" />
+                      {activeStory.likes}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 border-white/40 bg-black/30 text-white hover:bg-black/45"
+                      onClick={() => openStoryShareDialog(activeStory)}
+                    >
+                      <Share2 className="h-3.5 w-3.5" />
+                      Compartilhar
+                    </Button>
+                  </div>
+                  <span className="text-xs text-slate-200">
+                    {activeStory.sharedCount} compartilhamentos
+                  </span>
                 </div>
-              )}
+              </div>
             </div>
           )}
         </DialogContent>
@@ -2412,3 +3120,4 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     </div>
   );
 }
+

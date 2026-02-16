@@ -1,5 +1,5 @@
 export type SocialNotificationType = 'friend' | 'clan' | 'goal' | 'challenge' | 'post' | 'chat' | 'system';
-export type SocialSection = 'friends' | 'clans' | 'chat' | 'feed' | 'notifications';
+export type SocialSection = 'search' | 'friends' | 'clans' | 'chat' | 'feed' | 'notifications';
 
 export interface SocialFriend {
   id: string;
@@ -60,7 +60,9 @@ export interface SocialFeedPost {
   imageDataUrl: string;
   createdAt: string;
   likes: number;
+  likedByHandles: string[];
   sharedCount: number;
+  comments: SocialPostComment[];
 }
 
 export interface SocialStory {
@@ -71,6 +73,19 @@ export interface SocialStory {
   imageDataUrl: string;
   createdAt: string;
   expiresAt: string;
+  likes: number;
+  likedByHandles: string[];
+  sharedCount: number;
+}
+
+export interface SocialPostComment {
+  id: string;
+  authorName: string;
+  authorHandle: string;
+  text: string;
+  createdAt: string;
+  likes: number;
+  likedByHandles: string[];
 }
 
 export interface SocialNotification {
@@ -89,6 +104,7 @@ export interface SocialChatMessage {
   text: string;
   createdAt: string;
   postId?: string;
+  storyId?: string;
   externalEventId?: string;
 }
 
@@ -101,6 +117,7 @@ export interface SocialGlobalChatEvent {
   text: string;
   createdAt: string;
   postId?: string;
+  storyId?: string;
 }
 
 export interface SocialState {

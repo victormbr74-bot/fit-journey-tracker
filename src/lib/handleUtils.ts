@@ -39,7 +39,13 @@ export const formatHandleInput = (value: unknown) => {
   const compact = toText(value).trim().replace(/\s+/g, '');
   if (!compact) return '';
   if (compact === '@') return '@';
-  return toHandle(compact);
+
+  const sanitizedBody = sanitizeHandleBody(compact);
+  if (!sanitizedBody) {
+    return compact.startsWith('@') ? '@' : '';
+  }
+
+  return `@${sanitizedBody}`;
 };
 
 export const isValidHandle = (value: unknown) => HANDLE_REGEX.test(toText(value).trim().toLowerCase());

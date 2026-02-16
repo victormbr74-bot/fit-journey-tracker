@@ -38,13 +38,15 @@ import { normalizeHandle, toHandle } from '@/lib/handleUtils';
 import { SocialFeedPost, SocialState, SocialStory } from '@/types/social';
 
 interface ProfileSocialInfo {
-  bio: string;
+  phrase: string;
   message: string;
+  profilePhotoDataUrl: string;
 }
 
 const EMPTY_PROFILE_SOCIAL: ProfileSocialInfo = {
-  bio: '',
+  phrase: '',
   message: '',
+  profilePhotoDataUrl: '',
 };
 
 const MAX_IMAGE_SIZE = 1080;
@@ -97,8 +99,9 @@ const parseProfileSocial = (value: string | null): ProfileSocialInfo => {
   try {
     const parsed = JSON.parse(value) as Partial<ProfileSocialInfo>;
     return {
-      bio: parsed.bio?.toString() || '',
+      phrase: (parsed.phrase?.toString() || (parsed as { bio?: string }).bio || '').toString(),
       message: parsed.message?.toString() || '',
+      profilePhotoDataUrl: parsed.profilePhotoDataUrl?.toString() || '',
     };
   } catch {
     return EMPTY_PROFILE_SOCIAL;
@@ -155,14 +158,16 @@ export function ProfilePage() {
   const [globalPosts, setGlobalPosts] = useState<SocialFeedPost[]>([]);
   const [globalStories, setGlobalStories] = useState<SocialStory[]>([]);
   const [followingCount, setFollowingCount] = useState(0);
-  const [bio, setBio] = useState('');
+  const [phrase, setPhrase] = useState('');
   const [message, setMessage] = useState('');
+  const [profilePhotoDataUrl, setProfilePhotoDataUrl] = useState('');
   const [photoCaption, setPhotoCaption] = useState('');
   const [storyCaption, setStoryCaption] = useState('');
   const [activeStoryId, setActiveStoryId] = useState('');
   const [publishingMode, setPublishingMode] = useState<'post' | 'story' | null>(null);
   const [socialMediaLoaded, setSocialMediaLoaded] = useState(false);
 
+  const profilePhotoInputRef = useRef<HTMLInputElement | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const storyInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -191,8 +196,9 @@ export function ProfilePage() {
     setFollowingCount(parseFollowingCount(window.localStorage.getItem(socialHubStorageKey)));
 
     const socialInfo = parseProfileSocial(window.localStorage.getItem(socialProfileStorageKey));
-    setBio(socialInfo.bio);
+    setPhrase(socialInfo.phrase);
     setMessage(socialInfo.message);
+    setProfilePhotoDataUrl(socialInfo.profilePhotoDataUrl);
     setSocialMediaLoaded(true);
   }, [profile, socialHubStorageKey, socialProfileStorageKey]);
 
@@ -211,8 +217,9 @@ export function ProfilePage() {
       }
       if (event.key === socialProfileStorageKey) {
         const socialInfo = parseProfileSocial(event.newValue);
-        setBio(socialInfo.bio);
+        setPhrase(socialInfo.phrase);
         setMessage(socialInfo.message);
+        setProfilePhotoDataUrl(socialInfo.profilePhotoDataUrl);
       }
     };
 
@@ -300,13 +307,36 @@ export function ProfilePage() {
     navigate('/');
   };
 
-  const saveSocialProfile = () => {
+  const saveSocialProfile = (overrides?: Partial<ProfileSocialInfo>, showToast = true) => {
     const payload: ProfileSocialInfo = {
-      bio: bio.trim(),
-      message: message.trim(),
+      phrase: (overrides?.phrase ?? phrase).trim(),
+      message: (overrides?.message ?? message).trim(),
+      profilePhotoDataUrl: overrides?.profilePhotoDataUrl ?? profilePhotoDataUrl,
     };
     window.localStorage.setItem(socialProfileStorageKey, JSON.stringify(payload));
-    toast.success('Perfil social atualizado.');
+    if (showToast) {
+      toast.success('Perfil social atualizado.');
+    }
+  };
+
+  const handleProfilePhotoSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecione uma imagem valida para a foto de perfil.');
+      return;
+    }
+
+    try {
+      const imageDataUrl = await convertImageToDataUrl(file);
+      setProfilePhotoDataUrl(imageDataUrl);
+      saveSocialProfile({ profilePhotoDataUrl: imageDataUrl }, false);
+      toast.success('Foto de perfil atualizada.');
+    } catch (error) {
+      console.error('Erro ao atualizar foto de perfil:', error);
+      toast.error('Nao foi possivel atualizar a foto de perfil.');
+    }
   };
 
   const publishProfileMedia = async (file: File, mode: 'post' | 'story') => {
@@ -329,7 +359,9 @@ export function ProfilePage() {
           imageDataUrl,
           createdAt: now.toISOString(),
           likes: 0,
+          likedByHandles: [],
           sharedCount: 0,
+          comments: [],
         };
 
         setGlobalPosts((previous) => sanitizePosts([nextPost, ...previous]));
@@ -347,6 +379,9 @@ export function ProfilePage() {
         imageDataUrl,
         createdAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
+        likes: 0,
+        likedByHandles: [],
+        sharedCount: 0,
       };
 
       setGlobalStories((previous) => sanitizeStories([nextStory, ...previous]));
@@ -389,14 +424,32 @@ export function ProfilePage() {
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-4">
               <div className="rounded-full bg-gradient-to-br from-orange-400 via-rose-400 to-amber-400 p-1">
-                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-background text-2xl font-bold">
-                  {profile.name.charAt(0).toUpperCase()}
-                </div>
+                {profilePhotoDataUrl ? (
+                  <img
+                    src={profilePhotoDataUrl}
+                    alt={`Foto de perfil de ${profile.name}`}
+                    className="h-20 w-20 rounded-full border border-border/50 bg-background object-cover"
+                  />
+                ) : (
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-background text-2xl font-bold">
+                    {profile.name.charAt(0).toUpperCase()}
+                  </div>
+                )}
               </div>
               <div>
                 <h2 className="text-2xl font-bold leading-none">{profile.name}</h2>
                 <p className="mt-2 text-sm text-muted-foreground">{profileHandle}</p>
                 <p className="text-xs text-muted-foreground">{profile.email}</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  onClick={() => profilePhotoInputRef.current?.click()}
+                >
+                  <Camera className="h-4 w-4" />
+                  Alterar foto de perfil
+                </Button>
               </div>
             </div>
 
@@ -416,9 +469,9 @@ export function ProfilePage() {
             </div>
           </div>
 
-          {(bio || message) && (
+          {(phrase || message) && (
             <div className="mt-4 space-y-2 rounded-lg border border-border/60 bg-background/70 p-3">
-              {!!bio && <p className="text-sm font-medium">{bio}</p>}
+              {!!phrase && <p className="text-sm font-medium">{phrase}</p>}
               {!!message && <p className="text-sm text-muted-foreground whitespace-pre-wrap">{message}</p>}
             </div>
           )}
@@ -431,8 +484,8 @@ export function ProfilePage() {
               <Textarea
                 id="profile-bio"
                 rows={2}
-                value={bio}
-                onChange={(event) => setBio(event.target.value)}
+                value={phrase}
+                onChange={(event) => setPhrase(event.target.value)}
                 placeholder="Ex: constancia diaria, sem atalhos."
               />
             </div>
@@ -448,7 +501,7 @@ export function ProfilePage() {
             </div>
           </div>
 
-          <Button type="button" variant="outline" onClick={saveSocialProfile}>
+          <Button type="button" variant="outline" onClick={() => saveSocialProfile()}>
             <MessageSquareText className="h-4 w-4" />
             Salvar perfil social
           </Button>
@@ -508,6 +561,13 @@ export function ProfilePage() {
           </div>
 
           <input
+            ref={profilePhotoInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleProfilePhotoSelected}
+          />
+          <input
             ref={photoInputRef}
             type="file"
             accept="image/*"
@@ -548,10 +608,20 @@ export function ProfilePage() {
       <div className="glass-card p-6 mb-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-success flex items-center justify-center">
-              <span className="text-3xl font-bold text-primary-foreground">
-                {profile.name.charAt(0).toUpperCase()}
-              </span>
+            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-success p-[2px]">
+              {profilePhotoDataUrl ? (
+                <img
+                  src={profilePhotoDataUrl}
+                  alt={`Foto de perfil de ${profile.name}`}
+                  className="h-full w-full rounded-2xl border border-border/40 object-cover"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center rounded-2xl bg-background">
+                  <span className="text-3xl font-bold text-primary">
+                    {profile.name.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+              )}
             </div>
             <div>
               <h2 className="text-xl font-bold">{profile.name}</h2>

@@ -1,9 +1,10 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, MapPin, User, LogOut, Dumbbell, Utensils, Bot, Users } from 'lucide-react';
+import { LayoutDashboard, MapPin, User, LogOut, Dumbbell, Utensils, Bot, Users, Search } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
 const navItems = [
   { path: '/dashboard', label: 'Home', icon: LayoutDashboard },
+  { path: '/search', label: 'Pesquisa', icon: Search },
   { path: '/workout', label: 'Treino', icon: Dumbbell },
   { path: '/diet', label: 'Dieta', icon: Utensils },
   { path: '/running', label: 'Corrida', icon: MapPin },

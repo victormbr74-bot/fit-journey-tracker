@@ -226,6 +226,19 @@ export type Database = {
         Args: { seed_input: string; exclude_profile_id?: string | null }
         Returns: string
       }
+      search_profiles_by_handle: {
+        Args: {
+          query_text: string
+          limit_count?: number | null
+          exclude_profile_id?: string | null
+        }
+        Returns: {
+          goal: string | null
+          handle: string
+          name: string
+          profile_id: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
