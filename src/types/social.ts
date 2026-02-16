@@ -1,4 +1,5 @@
 export type SocialNotificationType = 'friend' | 'clan' | 'goal' | 'challenge' | 'post' | 'chat' | 'system';
+export type SocialSection = 'friends' | 'clans' | 'chat' | 'feed' | 'notifications';
 
 export interface SocialFriend {
   id: string;

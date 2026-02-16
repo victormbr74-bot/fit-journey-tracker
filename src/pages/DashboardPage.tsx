@@ -1,5 +1,5 @@
-import { Dashboard } from '@/components/dashboard/Dashboard';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { SocialHub } from '@/components/social/SocialHub';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -31,11 +31,11 @@ const DashboardPage = () => {
 
   return (
     <AppLayout>
-      <Dashboard />
+      <SocialHub profile={profile} defaultSection="feed" showSectionTabs={false} />
       <Button
         type="button"
         variant="energy"
-        className="fixed bottom-24 right-4 z-[70] h-12 rounded-full px-5 shadow-xl md:bottom-8 md:right-8"
+        className="fixed bottom-6 right-4 z-[70] h-12 rounded-full px-5 shadow-xl md:bottom-8 md:right-8"
         onClick={() => navigate('/assistant')}
       >
         <img

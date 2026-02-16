@@ -5,8 +5,13 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { SocialHub } from '@/components/social/SocialHub';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { SocialSection } from '@/types/social';
 
-const SocialPage = () => {
+interface SocialSectionPageProps {
+  section: SocialSection;
+}
+
+const SocialSectionPage = ({ section }: SocialSectionPageProps) => {
   const { user, loading: authLoading } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const navigate = useNavigate();
@@ -31,9 +36,9 @@ const SocialPage = () => {
 
   return (
     <AppLayout>
-      <SocialHub profile={profile} />
+      <SocialHub profile={profile} defaultSection={section} showSectionTabs={false} />
     </AppLayout>
   );
 };
 
-export default SocialPage;
+export default SocialSectionPage;

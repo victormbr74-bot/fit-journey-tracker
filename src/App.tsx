@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Index from "./pages/Index";
 import OnboardingPage from "./pages/OnboardingPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -11,7 +11,7 @@ import DietPage from "./pages/DietPage";
 import RunningPage from "./pages/RunningPage";
 import ProfilePage from "./pages/ProfilePage";
 import AssistantPage from "./pages/AssistantPage";
-import SocialPage from "./pages/SocialPage";
+import SocialSectionPage from "./pages/SocialSectionPage";
 import NotFound from "./pages/NotFound";
 import { ProfileProvider } from "@/context/ProfileContext";
 
@@ -32,7 +32,11 @@ const App = () => (
             <Route path="/diet" element={<DietPage />} />
             <Route path="/running" element={<RunningPage />} />
             <Route path="/assistant" element={<AssistantPage />} />
-            <Route path="/social" element={<SocialPage />} />
+            <Route path="/friends" element={<SocialSectionPage section="friends" />} />
+            <Route path="/clans" element={<SocialSectionPage section="clans" />} />
+            <Route path="/chat" element={<SocialSectionPage section="chat" />} />
+            <Route path="/notifications" element={<SocialSectionPage section="notifications" />} />
+            <Route path="/social" element={<Navigate to="/friends" replace />} />
             <Route path="/profile" element={<ProfilePage />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

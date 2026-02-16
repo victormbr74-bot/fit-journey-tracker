@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { SOCIAL_HUB_STORAGE_PREFIX } from '@/lib/storageKeys';
+import { SOCIAL_GLOBAL_FEED_STORAGE_KEY, SOCIAL_HUB_STORAGE_PREFIX } from '@/lib/storageKeys';
 import { UserProfile } from '@/types/user';
 import {
   SocialClan,
@@ -26,6 +26,7 @@ import {
   SocialFriend,
   SocialNotification,
   SocialNotificationType,
+  SocialSection,
   SocialState,
 } from '@/types/social';
 import { Badge } from '@/components/ui/badge';
@@ -39,6 +40,8 @@ import { Textarea } from '@/components/ui/textarea';
 
 interface SocialHubProps {
   profile: UserProfile;
+  defaultSection?: SocialSection;
+  showSectionTabs?: boolean;
 }
 
 const EMPTY_SOCIAL_STATE: SocialState = {
@@ -51,6 +54,7 @@ const EMPTY_SOCIAL_STATE: SocialState = {
 
 const NOTIFICATION_LIMIT = 120;
 const MAX_IMAGE_SIZE = 1080;
+const GLOBAL_FEED_POST_LIMIT = 500;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const normalizeHandle = (value: string) => value.trim().replace(/^@+/, '').toLowerCase();
@@ -115,7 +119,24 @@ const notificationTypeLabel: Record<SocialNotificationType, string> = {
   system: 'Sistema',
 };
 
-export function SocialHub({ profile }: SocialHubProps) {
+const mergePosts = (...lists: SocialFeedPost[][]): SocialFeedPost[] => {
+  const map = new Map<string, SocialFeedPost>();
+  lists.flat().forEach((post) => {
+    const previous = map.get(post.id);
+    if (!previous) {
+      map.set(post.id, post);
+      return;
+    }
+    if (new Date(post.createdAt).getTime() > new Date(previous.createdAt).getTime()) {
+      map.set(post.id, post);
+    }
+  });
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+};
+
+export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs = true }: SocialHubProps) {
   const storageKey = useMemo(() => `${SOCIAL_HUB_STORAGE_PREFIX}${profile.id}`, [profile.id]);
   const profileHandle = useMemo(
     () => `@${profile.name.trim().toLowerCase().replace(/\s+/g, '.').replace(/[^a-z0-9._]/g, '') || 'fit.user'}`,
@@ -123,7 +144,9 @@ export function SocialHub({ profile }: SocialHubProps) {
   );
 
   const [socialState, setSocialState] = useState<SocialState>(EMPTY_SOCIAL_STATE);
+  const [globalPosts, setGlobalPosts] = useState<SocialFeedPost[]>([]);
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<SocialSection>(defaultSection);
 
   const [friendName, setFriendName] = useState('');
   const [friendHandle, setFriendHandle] = useState('');
@@ -155,6 +178,33 @@ export function SocialHub({ profile }: SocialHubProps) {
   const postImageInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
+    setActiveSection(defaultSection);
+  }, [defaultSection]);
+
+  useEffect(() => {
+    const storedGlobalPosts = window.localStorage.getItem(SOCIAL_GLOBAL_FEED_STORAGE_KEY);
+    if (!storedGlobalPosts) {
+      setGlobalPosts([]);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(storedGlobalPosts) as SocialFeedPost[];
+      setGlobalPosts(Array.isArray(parsed) ? parsed : []);
+    } catch (error) {
+      console.error('Erro ao carregar feed global:', error);
+      setGlobalPosts([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      SOCIAL_GLOBAL_FEED_STORAGE_KEY,
+      JSON.stringify(globalPosts.slice(0, GLOBAL_FEED_POST_LIMIT))
+    );
+  }, [globalPosts]);
+
+  useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
     if (!stored) {
       setSocialState(EMPTY_SOCIAL_STATE);
@@ -164,13 +214,17 @@ export function SocialHub({ profile }: SocialHubProps) {
 
     try {
       const parsed = JSON.parse(stored) as Partial<SocialState>;
+      const legacyPosts = parsed.posts || [];
       setSocialState({
         friends: parsed.friends || [],
         clans: parsed.clans || [],
-        posts: parsed.posts || [],
+        posts: [],
         chatMessages: parsed.chatMessages || [],
         notifications: parsed.notifications || [],
       });
+      if (legacyPosts.length) {
+        setGlobalPosts((previous) => mergePosts(previous, legacyPosts));
+      }
     } catch (error) {
       console.error('Erro ao carregar dados sociais:', error);
       setSocialState(EMPTY_SOCIAL_STATE);
@@ -182,7 +236,8 @@ export function SocialHub({ profile }: SocialHubProps) {
 
   useEffect(() => {
     if (loadedStorageKey !== storageKey) return;
-    window.localStorage.setItem(storageKey, JSON.stringify(socialState));
+    const { posts: _ignoredPosts, ...stateWithoutPosts } = socialState;
+    window.localStorage.setItem(storageKey, JSON.stringify(stateWithoutPosts));
   }, [socialState, storageKey, loadedStorageKey]);
 
   useEffect(() => {
@@ -227,8 +282,8 @@ export function SocialHub({ profile }: SocialHubProps) {
   );
 
   const postsById = useMemo(
-    () => new Map(socialState.posts.map((post) => [post.id, post])),
-    [socialState.posts]
+    () => new Map(globalPosts.map((post) => [post.id, post])),
+    [globalPosts]
   );
 
   const activeChatMessages = useMemo(
@@ -483,7 +538,7 @@ export function SocialHub({ profile }: SocialHubProps) {
       sharedCount: 0,
     };
 
-    setSocialState((prev) => ({ ...prev, posts: [nextPost, ...prev.posts] }));
+    setGlobalPosts((previous) => mergePosts([nextPost], previous));
     pushNotification({
       type: 'post',
       title: 'Novo post no feed',
@@ -499,19 +554,17 @@ export function SocialHub({ profile }: SocialHubProps) {
   };
 
   const handleLikePost = (postId: string) => {
-    setSocialState((prev) => ({
-      ...prev,
-      posts: prev.posts.map((post) => (post.id === postId ? { ...post, likes: post.likes + 1 } : post)),
-    }));
+    setGlobalPosts((previous) =>
+      previous.map((post) => (post.id === postId ? { ...post, likes: post.likes + 1 } : post))
+    );
   };
 
   const markPostAsShared = (postId: string) => {
-    setSocialState((prev) => ({
-      ...prev,
-      posts: prev.posts.map((post) =>
+    setGlobalPosts((previous) =>
+      previous.map((post) =>
         post.id === postId ? { ...post, sharedCount: post.sharedCount + 1 } : post
-      ),
-    }));
+      )
+    );
   };
 
   const buildShareText = (post: SocialFeedPost) =>
@@ -654,14 +707,20 @@ export function SocialHub({ profile }: SocialHubProps) {
         </h1>
       </div>
 
-      <Tabs defaultValue="friends" className="space-y-4">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-5">
-          <TabsTrigger value="friends" className="py-2 text-xs md:text-sm">Amigos</TabsTrigger>
-          <TabsTrigger value="clans" className="py-2 text-xs md:text-sm">Clas</TabsTrigger>
-          <TabsTrigger value="chat" className="py-2 text-xs md:text-sm">Chat</TabsTrigger>
-          <TabsTrigger value="feed" className="py-2 text-xs md:text-sm">Feed</TabsTrigger>
-          <TabsTrigger value="notifications" className="py-2 text-xs md:text-sm">Notificacoes</TabsTrigger>
-        </TabsList>
+      <Tabs
+        value={activeSection}
+        onValueChange={(value) => setActiveSection(value as SocialSection)}
+        className="space-y-4"
+      >
+        {showSectionTabs && (
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-5">
+            <TabsTrigger value="friends" className="py-2 text-xs md:text-sm">Amigos</TabsTrigger>
+            <TabsTrigger value="clans" className="py-2 text-xs md:text-sm">Clas</TabsTrigger>
+            <TabsTrigger value="chat" className="py-2 text-xs md:text-sm">Chat</TabsTrigger>
+            <TabsTrigger value="feed" className="py-2 text-xs md:text-sm">Feed</TabsTrigger>
+            <TabsTrigger value="notifications" className="py-2 text-xs md:text-sm">Notificacoes</TabsTrigger>
+          </TabsList>
+        )}
 
         <TabsContent value="friends" className="space-y-4">
           <Card className="glass-card">
@@ -983,8 +1042,8 @@ export function SocialHub({ profile }: SocialHubProps) {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!socialState.posts.length && <p className="text-sm text-muted-foreground">Ainda nao ha posts.</p>}
-              {socialState.posts.map((post) => (
+              {!globalPosts.length && <p className="text-sm text-muted-foreground">Ainda nao ha posts.</p>}
+              {globalPosts.map((post) => (
                 <div key={post.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
