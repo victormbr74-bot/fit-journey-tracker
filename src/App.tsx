@@ -11,6 +11,7 @@ import DietPage from "./pages/DietPage";
 import RunningPage from "./pages/RunningPage";
 import ProfilePage from "./pages/ProfilePage";
 import AssistantPage from "./pages/AssistantPage";
+import SocialPage from "./pages/SocialPage";
 import NotFound from "./pages/NotFound";
 import { ProfileProvider } from "@/context/ProfileContext";
 
@@ -31,6 +32,7 @@ const App = () => (
             <Route path="/diet" element={<DietPage />} />
             <Route path="/running" element={<RunningPage />} />
             <Route path="/assistant" element={<AssistantPage />} />
+            <Route path="/social" element={<SocialPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
