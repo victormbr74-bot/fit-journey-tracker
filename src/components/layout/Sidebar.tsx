@@ -22,7 +22,7 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 const navItems = [
   { path: '/dashboard', label: 'HOME FEED', icon: LayoutDashboard },
   { path: '/friends', label: 'AMIGOS', icon: Users },
-  { path: '/clans', label: 'CLAS', icon: Trophy },
+  { path: '/clans', label: 'CLÃ', icon: Trophy },
   { path: '/chat', label: 'CHAT', icon: MessageCircle },
   { path: '/notifications', label: 'NOTIFICACOES', icon: Bell },
   { path: '/workout', label: 'TREINO', icon: Dumbbell },

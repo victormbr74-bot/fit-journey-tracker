@@ -9,6 +9,20 @@ export interface SocialFriend {
   addedAt: string;
 }
 
+export interface SocialFriendRequest {
+  id: string;
+  senderProfileId: string;
+  senderName: string;
+  senderHandle: string;
+  senderGoal: string;
+  receiverName: string;
+  receiverHandle: string;
+  receiverGoal: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: string;
+  respondedAt?: string;
+}
+
 export interface SocialClanGoal {
   id: string;
   title: string;
@@ -47,6 +61,16 @@ export interface SocialFeedPost {
   createdAt: string;
   likes: number;
   sharedCount: number;
+}
+
+export interface SocialStory {
+  id: string;
+  authorName: string;
+  authorHandle: string;
+  caption: string;
+  imageDataUrl: string;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface SocialNotification {

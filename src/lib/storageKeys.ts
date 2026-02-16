@@ -5,3 +5,5 @@ export const ASSISTANT_REMINDER_STORAGE_PREFIX = 'fit-journey.assistant-reminder
 export const ASSISTANT_STATE_STORAGE_PREFIX = 'fit-journey.assistant-state.';
 export const SOCIAL_HUB_STORAGE_PREFIX = 'fit-journey.social-hub.';
 export const SOCIAL_GLOBAL_FEED_STORAGE_KEY = 'fit-journey.social-feed.global';
+export const SOCIAL_GLOBAL_STORIES_STORAGE_KEY = 'fit-journey.social-stories.global';
+export const SOCIAL_GLOBAL_FRIEND_REQUESTS_STORAGE_KEY = 'fit-journey.social-friend-requests.global';
