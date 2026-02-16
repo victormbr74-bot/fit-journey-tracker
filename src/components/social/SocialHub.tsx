@@ -295,6 +295,36 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const notifiedIncomingRequestIdsRef = useRef<Set<string>>(new Set());
   const initializedIncomingRequestNotificationsRef = useRef(false);
 
+  const triggerSystemNotification = useCallback((title: string, description: string) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, { body: description });
+    }
+    if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
+      navigator.vibrate([70, 40, 90]);
+    }
+  }, []);
+
+  const pushNotification = useCallback((
+    notification: Omit<SocialNotification, 'id' | 'createdAt' | 'read'>,
+    notifySystem = true
+  ) => {
+    const nextNotification: SocialNotification = {
+      id: createId(),
+      createdAt: new Date().toISOString(),
+      read: false,
+      ...notification,
+    };
+
+    setSocialState((prev) => ({
+      ...prev,
+      notifications: [nextNotification, ...prev.notifications].slice(0, NOTIFICATION_LIMIT),
+    }));
+
+    if (notifySystem) {
+      triggerSystemNotification(nextNotification.title, nextNotification.description);
+    }
+  }, [triggerSystemNotification]);
+
   useEffect(() => {
     setActiveSection(defaultSection);
   }, [defaultSection]);
@@ -467,8 +497,33 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     try {
       const parsed = JSON.parse(stored) as Partial<SocialState>;
       const legacyPosts = parsed.posts || [];
+      const parsedFriends = Array.isArray(parsed.friends)
+        ? parsed.friends
+            .filter(
+              (friend): friend is Partial<SocialFriend> =>
+                Boolean(friend) && typeof friend === 'object'
+            )
+            .map((friend, index) => {
+              const fallbackName = typeof friend.name === 'string' && friend.name.trim()
+                ? friend.name.trim()
+                : `Perfil ${index + 1}`;
+              return {
+                id: typeof friend.id === 'string' && friend.id
+                  ? friend.id
+                  : `friend-legacy-${index}-${createId()}`,
+                name: fallbackName,
+                handle: toHandle(friend.handle || fallbackName),
+                goal: typeof friend.goal === 'string' && friend.goal.trim()
+                  ? friend.goal.trim()
+                  : 'Sem meta definida',
+                addedAt: typeof friend.addedAt === 'string' && friend.addedAt
+                  ? friend.addedAt
+                  : new Date().toISOString(),
+              };
+            })
+        : [];
       setSocialState({
-        friends: parsed.friends || [],
+        friends: parsedFriends,
         clans: parsed.clans || [],
         posts: [],
         chatMessages: parsed.chatMessages || [],
@@ -698,9 +753,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     const query = shareSearch.trim().toLowerCase();
     if (!query) return socialState.friends;
     return socialState.friends.filter(
-      (friend) =>
-        friend.name.toLowerCase().includes(query) ||
-        friend.handle.toLowerCase().includes(query)
+      (friend) => {
+        const friendName = (friend.name || '').toLowerCase();
+        const friendHandle = toHandle(friend.handle || friend.name || 'fit.user').toLowerCase();
+        return friendName.includes(query) || friendHandle.includes(query);
+      }
     );
   }, [socialState.friends, shareSearch]);
 
@@ -828,36 +885,6 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     if (!container) return;
     container.scrollTop = container.scrollHeight;
   }, [activeChatMessages]);
-
-  const triggerSystemNotification = useCallback((title: string, description: string) => {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(title, { body: description });
-    }
-    if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
-      navigator.vibrate([70, 40, 90]);
-    }
-  }, []);
-
-  const pushNotification = useCallback((
-    notification: Omit<SocialNotification, 'id' | 'createdAt' | 'read'>,
-    notifySystem = true
-  ) => {
-    const nextNotification: SocialNotification = {
-      id: createId(),
-      createdAt: new Date().toISOString(),
-      read: false,
-      ...notification,
-    };
-
-    setSocialState((prev) => ({
-      ...prev,
-      notifications: [nextNotification, ...prev.notifications].slice(0, NOTIFICATION_LIMIT),
-    }));
-
-    if (notifySystem) {
-      triggerSystemNotification(nextNotification.title, nextNotification.description);
-    }
-  }, [triggerSystemNotification]);
 
   const handleEnableBrowserNotifications = async () => {
     if (!('Notification' in window)) {
