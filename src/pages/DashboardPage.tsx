@@ -5,7 +5,6 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
-import { Bot } from 'lucide-react';
 
 const DashboardPage = () => {
   const { user, loading: authLoading } = useAuth();
@@ -36,10 +35,15 @@ const DashboardPage = () => {
       <Button
         type="button"
         variant="energy"
-        className="fixed bottom-24 right-4 z-[70] md:bottom-8 md:right-8"
+        className="fixed bottom-24 right-4 z-[70] h-12 rounded-full px-5 shadow-xl md:bottom-8 md:right-8"
         onClick={() => navigate('/assistant')}
       >
-        <Bot className="w-4 h-4" />
+        <img
+          src="/assistant-robot-lifting.gif"
+          alt="Robo levantando peso"
+          className="h-6 w-6 rounded-full object-cover"
+          loading="lazy"
+        />
         PERSONAL AMIGO
       </Button>
     </AppLayout>
