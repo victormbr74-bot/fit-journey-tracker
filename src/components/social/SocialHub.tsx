@@ -29,6 +29,7 @@ import {
   SOCIAL_GLOBAL_FRIEND_REQUESTS_STORAGE_KEY,
   SOCIAL_GLOBAL_STORIES_STORAGE_KEY,
   SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX,
+  SOCIAL_SEEN_FRIEND_REQUESTS_STORAGE_PREFIX,
   SOCIAL_HUB_STORAGE_PREFIX,
 } from '@/lib/storageKeys';
 import {
@@ -78,10 +79,18 @@ interface SocialHubProps {
 }
 
 interface DiscoverableProfile {
+  profileId?: string;
   handle: string;
   normalizedHandle: string;
   name: string;
   goal: string;
+}
+
+interface RemoteProfileSearchResult {
+  profile_id: string;
+  name: string | null;
+  handle: string;
+  goal: string | null;
 }
 
 const EMPTY_SOCIAL_STATE: SocialState = {
@@ -114,6 +123,7 @@ const GLOBAL_STORY_LIMIT = 500;
 const GLOBAL_FRIEND_REQUEST_LIMIT = 500;
 const GLOBAL_CHAT_EVENT_LIMIT = 1000;
 const SEEN_CHAT_EVENT_LIMIT = 2000;
+const SEEN_FRIEND_REQUEST_LIMIT = 1200;
 const STORY_DURATION_HOURS = 24;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -258,7 +268,41 @@ const sanitizeStories = (stories: unknown): SocialStory[] => {
 
 const sanitizeFriendRequests = (requests: SocialFriendRequest[]) =>
   requests
-    .filter((request) => request?.id && request.senderHandle && request.receiverHandle)
+    .filter(
+      (request) =>
+        request?.id &&
+        request?.senderProfileId &&
+        request?.senderHandle &&
+        request?.receiverHandle
+    )
+    .map((request) => {
+      const createdAt = !Number.isNaN(new Date(request.createdAt).getTime())
+        ? request.createdAt
+        : new Date().toISOString();
+      const respondedAt = request.respondedAt && !Number.isNaN(new Date(request.respondedAt).getTime())
+        ? request.respondedAt
+        : undefined;
+      const status: SocialFriendRequest['status'] =
+        request.status === 'accepted' ||
+        request.status === 'rejected' ||
+        request.status === 'canceled'
+          ? request.status
+          : 'pending';
+
+      return {
+        ...request,
+        senderName: request.senderName?.trim() || 'Perfil',
+        senderHandle: toHandle(request.senderHandle || request.senderName || 'fit.user'),
+        senderGoal: request.senderGoal?.trim() || 'Sem meta definida',
+        receiverProfileId: request.receiverProfileId || undefined,
+        receiverName: request.receiverName?.trim() || 'Perfil',
+        receiverHandle: toHandle(request.receiverHandle || request.receiverName || 'fit.user'),
+        receiverGoal: request.receiverGoal?.trim() || 'Sem meta definida',
+        createdAt,
+        respondedAt,
+        status,
+      };
+    })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, GLOBAL_FRIEND_REQUEST_LIMIT);
 
@@ -278,6 +322,29 @@ const sanitizeChatEvents = (events: SocialGlobalChatEvent[]) =>
 
 const sanitizeSeenChatEventIds = (eventIds: string[]) =>
   Array.from(new Set(eventIds.filter(Boolean))).slice(-SEEN_CHAT_EVENT_LIMIT);
+
+const sanitizeSeenFriendRequestIds = (requestIds: string[]) =>
+  Array.from(new Set(requestIds.filter(Boolean))).slice(-SEEN_FRIEND_REQUEST_LIMIT);
+
+const mapRemoteProfilesToDiscoverable = (
+  rows: RemoteProfileSearchResult[],
+  normalizedProfileHandle: string
+): DiscoverableProfile[] =>
+  rows
+    .map((item) => {
+      const normalizedHandle = normalizeHandle(item.handle);
+      if (!normalizedHandle || normalizedHandle === normalizedProfileHandle) return null;
+
+      const fallbackName = item.name?.trim() || toHandle(item.handle);
+      return {
+        profileId: item.profile_id,
+        handle: toHandle(item.handle),
+        normalizedHandle,
+        name: fallbackName,
+        goal: resolveGoalLabel(item.goal),
+      } as DiscoverableProfile;
+    })
+    .filter((item): item is DiscoverableProfile => Boolean(item));
 
 const sanitizeChatMessages = (messages: unknown): SocialChatMessage[] => {
   if (!Array.isArray(messages)) return [];
@@ -384,6 +451,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     () => `${SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX}${profile.id}`,
     [profile.id]
   );
+  const seenFriendRequestsStorageKey = useMemo(
+    () => `${SOCIAL_SEEN_FRIEND_REQUESTS_STORAGE_PREFIX}${profile.id}`,
+    [profile.id]
+  );
   const profileHandle = useMemo(
     () => profile.handle || toHandle(profile.name || profile.email || 'fit.user'),
     [profile.email, profile.handle, profile.name]
@@ -394,6 +465,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [globalPosts, setGlobalPosts] = useState<SocialFeedPost[]>([]);
   const [globalStories, setGlobalStories] = useState<SocialStory[]>([]);
   const [friendRequests, setFriendRequests] = useState<SocialFriendRequest[]>([]);
+  const [friendRequestsLoaded, setFriendRequestsLoaded] = useState(false);
+  const [seenIncomingRequestIds, setSeenIncomingRequestIds] = useState<string[]>([]);
   const [globalChatEvents, setGlobalChatEvents] = useState<SocialGlobalChatEvent[]>([]);
   const [seenChatEventIds, setSeenChatEventIds] = useState<string[]>([]);
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null);
@@ -444,8 +517,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const composerGalleryInputRef = useRef<HTMLInputElement | null>(null);
   const composerCameraInputRef = useRef<HTMLInputElement | null>(null);
   const chatMessagesContainerRef = useRef<HTMLDivElement | null>(null);
-  const notifiedIncomingRequestIdsRef = useRef<Set<string>>(new Set());
-  const initializedIncomingRequestNotificationsRef = useRef(false);
+  const outgoingRequestStatusRef = useRef<Map<string, SocialFriendRequest['status']>>(new Map());
+  const initializedOutgoingRequestStatusRef = useRef(false);
 
   const triggerSystemNotification = useCallback((title: string, description: string) => {
     if ('Notification' in window && Notification.permission === 'granted') {
@@ -482,6 +555,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   }, [defaultSection]);
 
   useEffect(() => {
+    setFriendRequestsLoaded(false);
+    setChatEventsLoaded(false);
+
     const storedGlobalPosts = window.localStorage.getItem(SOCIAL_GLOBAL_FEED_STORAGE_KEY);
     if (storedGlobalPosts) {
       try {
@@ -521,6 +597,21 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       setFriendRequests([]);
     }
 
+    const storedSeenFriendRequests = window.localStorage.getItem(seenFriendRequestsStorageKey);
+    if (storedSeenFriendRequests) {
+      try {
+        const parsed = JSON.parse(storedSeenFriendRequests) as string[];
+        setSeenIncomingRequestIds(
+          sanitizeSeenFriendRequestIds(Array.isArray(parsed) ? parsed : [])
+        );
+      } catch (error) {
+        console.error('Erro ao carregar solicitacoes vistas:', error);
+        setSeenIncomingRequestIds([]);
+      }
+    } else {
+      setSeenIncomingRequestIds([]);
+    }
+
     const storedGlobalChatEvents = window.localStorage.getItem(SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY);
     if (storedGlobalChatEvents) {
       try {
@@ -546,8 +637,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     } else {
       setSeenChatEventIds([]);
     }
+    setFriendRequestsLoaded(true);
     setChatEventsLoaded(true);
-  }, [seenChatEventsStorageKey]);
+  }, [seenChatEventsStorageKey, seenFriendRequestsStorageKey]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -569,6 +661,14 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       JSON.stringify(sanitizeFriendRequests(friendRequests))
     );
   }, [friendRequests]);
+
+  useEffect(() => {
+    if (!friendRequestsLoaded) return;
+    window.localStorage.setItem(
+      seenFriendRequestsStorageKey,
+      JSON.stringify(sanitizeSeenFriendRequestIds(seenIncomingRequestIds))
+    );
+  }, [seenIncomingRequestIds, seenFriendRequestsStorageKey, friendRequestsLoaded]);
 
   useEffect(() => {
     if (!chatEventsLoaded) return;
@@ -615,6 +715,17 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         }
       }
 
+      if (event.key === seenFriendRequestsStorageKey) {
+        try {
+          const parsed = event.newValue ? (JSON.parse(event.newValue) as string[]) : [];
+          setSeenIncomingRequestIds(
+            sanitizeSeenFriendRequestIds(Array.isArray(parsed) ? parsed : [])
+          );
+        } catch (error) {
+          console.error('Erro ao sincronizar solicitacoes vistas:', error);
+        }
+      }
+
       if (event.key === SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY) {
         try {
           const parsed = event.newValue ? (JSON.parse(event.newValue) as SocialGlobalChatEvent[]) : [];
@@ -636,7 +747,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, [seenChatEventsStorageKey]);
+  }, [seenChatEventsStorageKey, seenFriendRequestsStorageKey]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
@@ -735,9 +846,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       friendRequests.filter(
         (request) =>
           request.status === 'pending' &&
-          normalizeHandle(request.receiverHandle) === normalizedProfileHandle
+          (
+            request.receiverProfileId === profile.id ||
+            normalizeHandle(request.receiverHandle) === normalizedProfileHandle
+          )
       ),
-    [friendRequests, normalizedProfileHandle]
+    [friendRequests, normalizedProfileHandle, profile.id]
   );
 
   const outgoingPendingFriendRequests = useMemo(
@@ -749,16 +863,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   );
 
   useEffect(() => {
-    const trackedIds = notifiedIncomingRequestIdsRef.current;
-    if (!initializedIncomingRequestNotificationsRef.current) {
-      incomingFriendRequests.forEach((request) => trackedIds.add(request.id));
-      initializedIncomingRequestNotificationsRef.current = true;
-      return;
-    }
+    if (!friendRequestsLoaded) return;
 
-    incomingFriendRequests.forEach((request) => {
-      if (trackedIds.has(request.id)) return;
-      trackedIds.add(request.id);
+    const seenRequestIds = new Set(seenIncomingRequestIds);
+    const unseenRequests = incomingFriendRequests.filter(
+      (request) => !seenRequestIds.has(request.id)
+    );
+    if (!unseenRequests.length) return;
+
+    unseenRequests.forEach((request) => {
       pushNotification({
         type: 'friend',
         title: 'Novo pedido para seguir',
@@ -766,7 +879,116 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       });
       toast.info(`Novo pedido para seguir de ${request.senderName}.`);
     });
-  }, [incomingFriendRequests, pushNotification]);
+
+    setSeenIncomingRequestIds((previous) =>
+      sanitizeSeenFriendRequestIds([...previous, ...unseenRequests.map((request) => request.id)])
+    );
+  }, [
+    friendRequestsLoaded,
+    incomingFriendRequests,
+    pushNotification,
+    seenIncomingRequestIds,
+  ]);
+
+  useEffect(() => {
+    if (!friendRequestsLoaded) return;
+
+    const trackedStatuses = outgoingRequestStatusRef.current;
+    const myRequests = friendRequests.filter((request) => request.senderProfileId === profile.id);
+
+    if (!initializedOutgoingRequestStatusRef.current) {
+      myRequests.forEach((request) => trackedStatuses.set(request.id, request.status));
+      initializedOutgoingRequestStatusRef.current = true;
+      return;
+    }
+
+    const activeIds = new Set<string>();
+    myRequests.forEach((request) => {
+      activeIds.add(request.id);
+      const previousStatus = trackedStatuses.get(request.id);
+      if (!previousStatus) {
+        trackedStatuses.set(request.id, request.status);
+        return;
+      }
+      if (previousStatus === request.status) return;
+      trackedStatuses.set(request.id, request.status);
+
+      if (request.status === 'accepted') {
+        pushNotification({
+          type: 'friend',
+          title: 'Pedido aceito',
+          description: `${request.receiverName} aceitou seu pedido para seguir.`,
+        });
+        toast.success(`${request.receiverName} aceitou seu pedido.`);
+      }
+
+      if (request.status === 'rejected') {
+        pushNotification({
+          type: 'friend',
+          title: 'Pedido recusado',
+          description: `${request.receiverName} recusou seu pedido para seguir.`,
+        });
+        toast.error(`${request.receiverName} recusou seu pedido.`);
+      }
+    });
+
+    Array.from(trackedStatuses.keys()).forEach((requestId) => {
+      if (activeIds.has(requestId)) return;
+      trackedStatuses.delete(requestId);
+    });
+  }, [friendRequests, friendRequestsLoaded, profile.id, pushNotification]);
+
+  useEffect(() => {
+    if (!friendRequestsLoaded) {
+      initializedOutgoingRequestStatusRef.current = false;
+      outgoingRequestStatusRef.current.clear();
+      return;
+    }
+  }, [friendRequestsLoaded]);
+
+  const fetchRemoteProfilesByHandle = useCallback(async (
+    rawQuery: string,
+    limitCount = 12
+  ): Promise<DiscoverableProfile[]> => {
+    const normalizedQuery = sanitizeHandleInput(rawQuery);
+    if (!normalizedQuery) return [];
+
+    const { data, error } = await supabase.rpc('search_profiles_by_handle', {
+      query_text: normalizedQuery,
+      limit_count: limitCount,
+      exclude_profile_id: profile.id,
+    });
+
+    if (!error && Array.isArray(data)) {
+      return mapRemoteProfilesToDiscoverable(data, normalizedProfileHandle);
+    }
+
+    if (error) {
+      console.error('Erro ao buscar perfis por @usuario (rpc):', error);
+    }
+
+    const { data: fallbackRows, error: fallbackError } = await supabase
+      .from('profiles')
+      .select('id, name, handle, goal')
+      .neq('id', profile.id)
+      .ilike('handle', `%${normalizedQuery}%`)
+      .order('updated_at', { ascending: false })
+      .limit(limitCount);
+
+    if (fallbackError) {
+      console.error('Erro ao buscar perfis por @usuario (fallback):', fallbackError);
+      return [];
+    }
+
+    const mappedRows: RemoteProfileSearchResult[] = (fallbackRows || []).map((row) => ({
+      profile_id: row.id,
+      name: row.name,
+      handle: row.handle,
+      goal: row.goal,
+    }));
+
+    return mapRemoteProfilesToDiscoverable(mappedRows, normalizedProfileHandle);
+  }, [normalizedProfileHandle, profile.id]);
 
   const friendHandleSearch = useMemo(() => sanitizeHandleInput(friendHandle), [friendHandle]);
 
@@ -780,39 +1002,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     let canceled = false;
     const searchTimer = window.setTimeout(async () => {
       setIsSearchingProfiles(true);
-      const { data, error } = await supabase.rpc('search_profiles_by_handle', {
-        query_text: friendHandleSearch,
-        limit_count: 12,
-        exclude_profile_id: profile.id,
-      });
-
+      const remoteProfiles = await fetchRemoteProfilesByHandle(friendHandleSearch, 12);
       if (canceled) return;
 
-      if (error) {
-        console.error('Erro ao buscar perfis por @usuario:', error);
-        setRemoteDiscoverableProfiles([]);
-        setIsSearchingProfiles(false);
-        return;
-      }
-
-      const parsedProfiles = Array.isArray(data)
-        ? data
-            .map((item) => {
-              const normalizedHandle = normalizeHandle(item.handle);
-              if (!normalizedHandle || normalizedHandle === normalizedProfileHandle) return null;
-
-              const fallbackName = item.name?.trim() || toHandle(item.handle);
-              return {
-                handle: toHandle(item.handle),
-                normalizedHandle,
-                name: fallbackName,
-                goal: resolveGoalLabel(item.goal),
-              } as DiscoverableProfile;
-            })
-            .filter((item): item is DiscoverableProfile => Boolean(item))
-        : [];
-
-      setRemoteDiscoverableProfiles(parsedProfiles);
+      setRemoteDiscoverableProfiles(remoteProfiles);
       setIsSearchingProfiles(false);
     }, 220);
 
@@ -820,17 +1013,23 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       canceled = true;
       window.clearTimeout(searchTimer);
     };
-  }, [friendHandleSearch, normalizedProfileHandle, profile.id]);
+  }, [fetchRemoteProfilesByHandle, friendHandleSearch]);
 
   const localDiscoverableProfiles = useMemo(() => {
     const catalog = new Map<string, DiscoverableProfile>();
 
-    const registerProfile = (rawName: string, rawHandle: string, rawGoal?: string) => {
+    const registerProfile = (
+      rawName: string,
+      rawHandle: string,
+      rawGoal?: string,
+      profileId?: string
+    ) => {
       const normalizedHandle = sanitizeHandleInput(rawHandle);
       if (!normalizedHandle || normalizedHandle === normalizedProfileHandle) return;
 
       const fallbackName = rawName?.trim() || `@${normalizedHandle}`;
       const nextEntry: DiscoverableProfile = {
+        profileId,
         handle: toHandle(normalizedHandle),
         normalizedHandle,
         name: fallbackName,
@@ -849,12 +1048,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       if (existing.goal === 'Sem meta definida' && nextEntry.goal !== 'Sem meta definida') {
         existing.goal = nextEntry.goal;
       }
+      if (!existing.profileId && profileId) {
+        existing.profileId = profileId;
+      }
     };
 
     socialState.friends.forEach((friend) => registerProfile(friend.name, friend.handle, friend.goal));
     friendRequests.forEach((request) => {
-      registerProfile(request.senderName, request.senderHandle, request.senderGoal);
-      registerProfile(request.receiverName, request.receiverHandle, request.receiverGoal);
+      registerProfile(request.senderName, request.senderHandle, request.senderGoal, request.senderProfileId);
+      registerProfile(request.receiverName, request.receiverHandle, request.receiverGoal, request.receiverProfileId);
     });
     globalPosts.forEach((post) => registerProfile(post.authorName, post.authorHandle));
     globalStories.forEach((story) => registerProfile(story.authorName, story.authorHandle));
@@ -886,6 +1088,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       if (current.goal === 'Sem meta definida' && candidate.goal !== 'Sem meta definida') {
         current.goal = candidate.goal;
       }
+      if (!current.profileId && candidate.profileId) {
+        current.profileId = candidate.profileId;
+      }
     };
 
     localDiscoverableProfiles.forEach(registerProfile);
@@ -893,6 +1098,21 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     return Array.from(catalog.values()).sort((a, b) => a.handle.localeCompare(b.handle));
   }, [localDiscoverableProfiles, normalizedProfileHandle, remoteDiscoverableProfiles]);
+
+  const resolveDiscoverableProfileByHandle = useCallback(async (
+    normalizedHandle: string
+  ): Promise<DiscoverableProfile | null> => {
+    const localExact = discoverableProfiles.find(
+      (candidate) => candidate.normalizedHandle === normalizedHandle
+    );
+    if (localExact) return localExact;
+
+    const remoteCandidates = await fetchRemoteProfilesByHandle(normalizedHandle, 12);
+    const remoteExact = remoteCandidates.find(
+      (candidate) => candidate.normalizedHandle === normalizedHandle
+    );
+    return remoteExact ?? null;
+  }, [discoverableProfiles, fetchRemoteProfilesByHandle]);
 
   const filteredDiscoverableProfiles = useMemo(() => {
     if (!friendHandle.trim()) return [];
@@ -904,6 +1124,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           candidate.normalizedHandle.includes(friendHandleSearch) ||
           candidate.name.toLowerCase().includes(friendHandleSearch)
       )
+      .sort((a, b) => {
+        const aStartsWith = a.normalizedHandle.startsWith(friendHandleSearch) ? 0 : 1;
+        const bStartsWith = b.normalizedHandle.startsWith(friendHandleSearch) ? 0 : 1;
+        if (aStartsWith !== bStartsWith) return aStartsWith - bStartsWith;
+        return a.handle.localeCompare(b.handle);
+      })
       .slice(0, 8);
   }, [discoverableProfiles, friendHandle, friendHandleSearch]);
 
@@ -912,6 +1138,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       friendRequests.filter((request) => {
         if (request.status !== 'accepted') return false;
         if (request.senderProfileId === profile.id) return true;
+        if (request.receiverProfileId === profile.id) return true;
         return normalizeHandle(request.receiverHandle) === normalizedProfileHandle;
       }),
     [friendRequests, profile.id, normalizedProfileHandle]
@@ -1177,7 +1404,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
   };
 
-  const handleAddFriend = (event: FormEvent<HTMLFormElement>) => {
+  const handleAddFriend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const receiverHandleValue = sanitizeHandleInput(friendHandle);
     if (!receiverHandleValue) {
@@ -1189,19 +1416,29 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       return;
     }
 
-    const selectedProfile = discoverableProfiles.find(
-      (candidate) => candidate.normalizedHandle === receiverHandleValue
-    );
-    const receiverNameCandidate = friendName.trim() || selectedProfile?.name || receiverHandleValue;
-    const receiverName = receiverNameCandidate.startsWith('@')
-      ? receiverNameCandidate.slice(1)
-      : receiverNameCandidate;
-    const receiverGoalLabel = friendGoal.trim() || selectedProfile?.goal || 'Sem meta definida';
-
     if (receiverHandleValue === normalizedProfileHandle) {
       toast.error('Nao e possivel seguir voce mesmo.');
       return;
     }
+
+    const targetProfile = await resolveDiscoverableProfileByHandle(receiverHandleValue);
+    if (!targetProfile) {
+      toast.error('Nao encontramos esse @usuario. Escolha um perfil listado na busca.');
+      return;
+    }
+
+    const receiverProfileId = targetProfile.profileId;
+    if (receiverProfileId && receiverProfileId === profile.id) {
+      toast.error('Nao e possivel seguir voce mesmo.');
+      return;
+    }
+
+    const receiverNameCandidate = friendName.trim() || targetProfile.name || receiverHandleValue;
+    const receiverName = receiverNameCandidate.startsWith('@')
+      ? receiverNameCandidate.slice(1)
+      : receiverNameCandidate;
+    const receiverGoalLabel = friendGoal.trim() || targetProfile.goal || 'Sem meta definida';
+    const receiverHandle = toHandle(targetProfile.handle || receiverHandleValue);
 
     if (socialState.friends.some((friend) => normalizeHandle(friend.handle) === receiverHandleValue)) {
       toast.error('Voce ja segue esse usuario.');
@@ -1212,7 +1449,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       (request) =>
         request.status === 'pending' &&
         request.senderProfileId === profile.id &&
-        normalizeHandle(request.receiverHandle) === receiverHandleValue
+        (
+          (Boolean(request.receiverProfileId) &&
+            Boolean(receiverProfileId) &&
+            request.receiverProfileId === receiverProfileId) ||
+          normalizeHandle(request.receiverHandle) === receiverHandleValue
+        )
     );
 
     if (hasOutgoingPending) {
@@ -1223,8 +1465,14 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     const hasIncomingPending = friendRequests.some(
       (request) =>
         request.status === 'pending' &&
-        normalizeHandle(request.senderHandle) === receiverHandleValue &&
-        normalizeHandle(request.receiverHandle) === normalizedProfileHandle
+        (
+          (Boolean(receiverProfileId) && request.senderProfileId === receiverProfileId) ||
+          normalizeHandle(request.senderHandle) === receiverHandleValue
+        ) &&
+        (
+          request.receiverProfileId === profile.id ||
+          normalizeHandle(request.receiverHandle) === normalizedProfileHandle
+        )
     );
 
     if (hasIncomingPending) {
@@ -1238,8 +1486,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       senderName: profile.name,
       senderHandle: profileHandle,
       senderGoal: PROFILE_GOAL_LABEL[profile.goal],
+      receiverProfileId,
       receiverName,
-      receiverHandle: `@${receiverHandleValue}`,
+      receiverHandle,
       receiverGoal: receiverGoalLabel,
       status: 'pending',
       createdAt: new Date().toISOString(),
@@ -1293,6 +1542,27 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     );
 
     toast.success('Solicitacao para seguir recusada.');
+  };
+
+  const handleCancelOutgoingFriendRequest = (requestId: string) => {
+    const request = outgoingPendingFriendRequests.find((item) => item.id === requestId);
+    if (!request) return;
+
+    const respondedAt = new Date().toISOString();
+    setFriendRequests((previous) =>
+      sanitizeFriendRequests(
+        previous.map((item) =>
+          item.id === requestId ? { ...item, status: 'canceled', respondedAt } : item
+        )
+      )
+    );
+
+    pushNotification({
+      type: 'friend',
+      title: 'Solicitacao cancelada',
+      description: `Voce cancelou o pedido para seguir ${request.receiverName}.`,
+    }, false);
+    toast.success('Solicitacao cancelada.');
   };
 
   const handleRemoveFriend = (friendId: string) => {
@@ -1490,17 +1760,6 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const openComposer = (mode: 'post' | 'story') => {
     setComposerMode(mode);
     setIsComposerOpen(true);
-  };
-
-  const openComposerAndPick = (mode: 'post' | 'story', picker: 'gallery' | 'camera') => {
-    openComposer(mode);
-    window.setTimeout(() => {
-      if (picker === 'gallery') {
-        composerGalleryInputRef.current?.click();
-        return;
-      }
-      composerCameraInputRef.current?.click();
-    }, 0);
   };
 
   const handleComposerImageSelected = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -2271,10 +2530,19 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                   <p className="text-sm text-muted-foreground">Nenhum pedido pendente.</p>
                 )}
                 {outgoingPendingFriendRequests.map((request) => (
-                  <div key={request.id} className="rounded-lg border border-border/70 bg-card/40 p-3">
+                  <div key={request.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
                     <p className="font-semibold">{request.receiverName}</p>
                     <p className="text-sm text-muted-foreground">{request.receiverHandle}</p>
                     <p className="text-xs text-muted-foreground mt-1">Enviado em {formatDateTime(request.createdAt)}</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleCancelOutgoingFriendRequest(request.id)}
+                    >
+                      <X className="h-4 w-4" />
+                      Cancelar solicitacao
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -2550,64 +2818,34 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         </TabsContent>
 
         <TabsContent value="feed" className="space-y-4">
-          <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="text-lg">Publicar no feed</CardTitle>
-              <CardDescription>
-                Use o botao + para adicionar foto da galeria ou abrir a camera.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-xl border border-dashed border-border/80 bg-card/40 p-5 text-center space-y-4">
-                <Button
-                  type="button"
-                  size="icon"
-                  className="mx-auto h-16 w-16 rounded-full"
-                  onClick={() => openComposer('post')}
-                >
-                  <Plus className="h-7 w-7" />
-                  <span className="sr-only">Novo post</span>
-                </Button>
-                <p className="text-sm text-muted-foreground">
-                  Toque no + para criar um post ou uma story.
-                </p>
-                <div className="flex flex-wrap justify-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => openComposerAndPick('post', 'gallery')}
-                  >
-                    <ImagePlus className="h-4 w-4" />
-                    Galeria
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => openComposerAndPick('post', 'camera')}
-                  >
-                    <Camera className="h-4 w-4" />
-                    Camera
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => openComposer('story')}
-                  >
-                    <Plus className="h-4 w-4" />
-                    Nova story
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/50 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold">Home feed</p>
+              <p className="text-xs text-muted-foreground">
+                Stories e posts, com criacao pelo botao +.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="icon"
+              className="h-11 w-11 rounded-full"
+              onClick={() => openComposer('post')}
+            >
+              <Plus className="h-5 w-5" />
+              <span className="sr-only">Adicionar story ou post</span>
+            </Button>
+          </div>
 
           <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="text-lg">Stories</CardTitle>
-              <CardDescription>Stories expiram em 24 horas, no estilo Insta.</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="text-lg">Stories</CardTitle>
+                <CardDescription>Stories expiram em 24 horas, estilo Instagram.</CardDescription>
+              </div>
+              <Button type="button" size="sm" variant="outline" onClick={() => openComposer('story')}>
+                <Plus className="h-4 w-4" />
+                Nova
+              </Button>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex gap-3 overflow-x-auto pb-2">
@@ -2648,9 +2886,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           </Card>
 
           <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="text-lg">Feed da comunidade</CardTitle>
-              <CardDescription>Compartilhe em um painel estilo Instagram.</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle className="text-lg">Feed da comunidade</CardTitle>
+                <CardDescription>Painel social no estilo Instagram, com visual proprio.</CardDescription>
+              </div>
+              <Button type="button" size="sm" variant="outline" onClick={() => openComposer('post')}>
+                <Plus className="h-4 w-4" />
+                Novo post
+              </Button>
             </CardHeader>
             <CardContent className="space-y-4">
               {!globalPosts.length && <p className="text-sm text-muted-foreground">Ainda nao ha posts.</p>}

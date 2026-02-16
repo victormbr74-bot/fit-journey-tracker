@@ -15,10 +15,11 @@ export interface SocialFriendRequest {
   senderName: string;
   senderHandle: string;
   senderGoal: string;
+  receiverProfileId?: string;
   receiverName: string;
   receiverHandle: string;
   receiverGoal: string;
-  status: 'pending' | 'accepted' | 'rejected';
+  status: 'pending' | 'accepted' | 'rejected' | 'canceled';
   createdAt: string;
   respondedAt?: string;
 }
