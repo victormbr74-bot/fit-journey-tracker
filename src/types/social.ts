@@ -1,4 +1,4 @@
-export type SocialNotificationType = 'friend' | 'clan' | 'goal' | 'challenge' | 'post' | 'system';
+export type SocialNotificationType = 'friend' | 'clan' | 'goal' | 'challenge' | 'post' | 'chat' | 'system';
 
 export interface SocialFriend {
   id: string;
@@ -57,9 +57,19 @@ export interface SocialNotification {
   read: boolean;
 }
 
+export interface SocialChatMessage {
+  id: string;
+  friendId: string;
+  sender: 'me' | 'friend';
+  text: string;
+  createdAt: string;
+  postId?: string;
+}
+
 export interface SocialState {
   friends: SocialFriend[];
   clans: SocialClan[];
   posts: SocialFeedPost[];
+  chatMessages: SocialChatMessage[];
   notifications: SocialNotification[];
 }

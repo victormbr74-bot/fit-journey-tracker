@@ -21,6 +21,7 @@ import {
   SocialClan,
   SocialClanChallenge,
   SocialClanGoal,
+  SocialChatMessage,
   SocialFeedPost,
   SocialFriend,
   SocialNotification,
@@ -44,6 +45,7 @@ const EMPTY_SOCIAL_STATE: SocialState = {
   friends: [],
   clans: [],
   posts: [],
+  chatMessages: [],
   notifications: [],
 };
 
@@ -109,6 +111,7 @@ const notificationTypeLabel: Record<SocialNotificationType, string> = {
   goal: 'Meta',
   challenge: 'Desafio',
   post: 'Feed',
+  chat: 'Chat',
   system: 'Sistema',
 };
 
@@ -145,6 +148,9 @@ export function SocialHub({ profile }: SocialHubProps) {
   const [postCaption, setPostCaption] = useState('');
   const [postImageDataUrl, setPostImageDataUrl] = useState('');
   const [processingImage, setProcessingImage] = useState(false);
+  const [activeChatFriendId, setActiveChatFriendId] = useState('');
+  const [feedShareFriendId, setFeedShareFriendId] = useState('');
+  const [chatInput, setChatInput] = useState('');
 
   const postImageInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -162,6 +168,7 @@ export function SocialHub({ profile }: SocialHubProps) {
         friends: parsed.friends || [],
         clans: parsed.clans || [],
         posts: parsed.posts || [],
+        chatMessages: parsed.chatMessages || [],
         notifications: parsed.notifications || [],
       });
     } catch (error) {
@@ -193,6 +200,22 @@ export function SocialHub({ profile }: SocialHubProps) {
     }
   }, [socialState.clans, goalClanId, challengeClanId]);
 
+  useEffect(() => {
+    if (!socialState.friends.length) {
+      setActiveChatFriendId('');
+      setFeedShareFriendId('');
+      return;
+    }
+
+    if (!socialState.friends.some((friend) => friend.id === activeChatFriendId)) {
+      setActiveChatFriendId(socialState.friends[0].id);
+    }
+
+    if (!socialState.friends.some((friend) => friend.id === feedShareFriendId)) {
+      setFeedShareFriendId(socialState.friends[0].id);
+    }
+  }, [socialState.friends, activeChatFriendId, feedShareFriendId]);
+
   const unreadNotifications = useMemo(
     () => socialState.notifications.filter((notification) => !notification.read).length,
     [socialState.notifications]
@@ -201,6 +224,19 @@ export function SocialHub({ profile }: SocialHubProps) {
   const friendsById = useMemo(
     () => new Map(socialState.friends.map((friend) => [friend.id, friend])),
     [socialState.friends]
+  );
+
+  const postsById = useMemo(
+    () => new Map(socialState.posts.map((post) => [post.id, post])),
+    [socialState.posts]
+  );
+
+  const activeChatMessages = useMemo(
+    () =>
+      socialState.chatMessages
+        .filter((message) => message.friendId === activeChatFriendId)
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+    [socialState.chatMessages, activeChatFriendId]
   );
 
   const pushNotification = (notification: Omit<SocialNotification, 'id' | 'createdAt' | 'read'>) => {
@@ -537,6 +573,60 @@ export function SocialHub({ profile }: SocialHubProps) {
     }
   };
 
+  const appendChatMessage = (message: SocialChatMessage) => {
+    setSocialState((prev) => ({
+      ...prev,
+      chatMessages: [...prev.chatMessages, message],
+    }));
+  };
+
+  const handleSendChatMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeChatFriendId) {
+      toast.error('Selecione um amigo para conversar.');
+      return;
+    }
+    const text = chatInput.trim();
+    if (!text) return;
+
+    appendChatMessage({
+      id: createId(),
+      friendId: activeChatFriendId,
+      sender: 'me',
+      text,
+      createdAt: new Date().toISOString(),
+    });
+    setChatInput('');
+  };
+
+  const handleSharePostWithFriend = (post: SocialFeedPost) => {
+    const friendId = feedShareFriendId || activeChatFriendId;
+    if (!friendId) {
+      toast.error('Selecione um amigo para compartilhar.');
+      return;
+    }
+
+    const friend = friendsById.get(friendId);
+
+    appendChatMessage({
+      id: createId(),
+      friendId,
+      sender: 'me',
+      text: `Compartilhei este post com voce: ${post.caption}`,
+      createdAt: new Date().toISOString(),
+      postId: post.id,
+    });
+
+    markPostAsShared(post.id);
+    setActiveChatFriendId(friendId);
+    pushNotification({
+      type: 'chat',
+      title: 'Post enviado para amigo',
+      description: `${friend?.name || 'Amigo'} recebeu um compartilhamento do feed.`,
+    });
+    toast.success('Post compartilhado no chat.');
+  };
+
   const handleMarkAllNotificationsAsRead = () => {
     setSocialState((prev) => ({
       ...prev,
@@ -565,9 +655,10 @@ export function SocialHub({ profile }: SocialHubProps) {
       </div>
 
       <Tabs defaultValue="friends" className="space-y-4">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-4">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-5">
           <TabsTrigger value="friends" className="py-2 text-xs md:text-sm">Amigos</TabsTrigger>
           <TabsTrigger value="clans" className="py-2 text-xs md:text-sm">Clas</TabsTrigger>
+          <TabsTrigger value="chat" className="py-2 text-xs md:text-sm">Chat</TabsTrigger>
           <TabsTrigger value="feed" className="py-2 text-xs md:text-sm">Feed</TabsTrigger>
           <TabsTrigger value="notifications" className="py-2 text-xs md:text-sm">Notificacoes</TabsTrigger>
         </TabsList>
@@ -763,6 +854,85 @@ export function SocialHub({ profile }: SocialHubProps) {
           </Card>
         </TabsContent>
 
+        <TabsContent value="chat" className="space-y-4">
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle className="text-lg">Chat entre amigos</CardTitle>
+              <CardDescription>Converse e compartilhe posts direto com seus amigos.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="chat-friend-select">Conversa com</Label>
+                <select
+                  id="chat-friend-select"
+                  className="flex h-12 w-full rounded-lg border border-border bg-secondary/50 px-3 text-sm"
+                  value={activeChatFriendId}
+                  onChange={(event) => setActiveChatFriendId(event.target.value)}
+                >
+                  {!socialState.friends.length && <option value="">Nenhum amigo disponivel</option>}
+                  {socialState.friends.map((friend) => (
+                    <option key={friend.id} value={friend.id}>
+                      {friend.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {!socialState.friends.length && (
+                <p className="text-sm text-muted-foreground">Adicione amigos para iniciar o chat.</p>
+              )}
+
+              {!!socialState.friends.length && (
+                <>
+                  <div className="rounded-lg border border-border/70 bg-card/40 p-3 min-h-56 max-h-80 overflow-y-auto space-y-2">
+                    {!activeChatMessages.length && (
+                      <p className="text-sm text-muted-foreground">Nenhuma mensagem ainda.</p>
+                    )}
+                    {activeChatMessages.map((message) => {
+                      const sharedPost = message.postId ? postsById.get(message.postId) : null;
+                      return (
+                        <div
+                          key={message.id}
+                          className={`max-w-[85%] rounded-lg p-2 ${
+                            message.sender === 'me'
+                              ? 'ml-auto bg-primary/20 border border-primary/30'
+                              : 'mr-auto bg-secondary border border-border/60'
+                          }`}
+                        >
+                          <p className="text-sm">{message.text}</p>
+                          {sharedPost && (
+                            <div className="mt-2 rounded-md border border-border/60 bg-background/50 p-2">
+                              <img
+                                src={sharedPost.imageDataUrl}
+                                alt={`Post de ${sharedPost.authorName}`}
+                                className="h-24 w-full rounded-md object-cover"
+                              />
+                              <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{sharedPost.caption}</p>
+                            </div>
+                          )}
+                          <p className="mt-1 text-[10px] text-muted-foreground">{formatDateTime(message.createdAt)}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSendChatMessage}>
+                    <Input
+                      value={chatInput}
+                      onChange={(event) => setChatInput(event.target.value)}
+                      placeholder="Escreva sua mensagem..."
+                    />
+                    <Button type="submit" variant="energy" className="sm:w-auto">
+                      <MessageCircle className="h-4 w-4" />
+                      Enviar
+                    </Button>
+                  </form>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="feed" className="space-y-4">
           <Card className="glass-card">
             <CardHeader>
@@ -794,6 +964,23 @@ export function SocialHub({ profile }: SocialHubProps) {
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="text-lg">Feed da comunidade</CardTitle>
+              <CardDescription>Compartilhe no WhatsApp, Instagram e no chat entre amigos.</CardDescription>
+              <div className="space-y-2">
+                <Label htmlFor="feed-share-friend">Compartilhar com amigo (chat)</Label>
+                <select
+                  id="feed-share-friend"
+                  className="flex h-12 w-full rounded-lg border border-border bg-secondary/50 px-3 text-sm"
+                  value={feedShareFriendId}
+                  onChange={(event) => setFeedShareFriendId(event.target.value)}
+                >
+                  {!socialState.friends.length && <option value="">Nenhum amigo disponivel</option>}
+                  {socialState.friends.map((friend) => (
+                    <option key={friend.id} value={friend.id}>
+                      {friend.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               {!socialState.posts.length && <p className="text-sm text-muted-foreground">Ainda nao ha posts.</p>}
@@ -802,7 +989,7 @@ export function SocialHub({ profile }: SocialHubProps) {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="font-semibold">{post.authorName}</p>
-                      <p className="text-xs text-muted-foreground">{post.authorHandle} • {formatDateTime(post.createdAt)}</p>
+                      <p className="text-xs text-muted-foreground">{post.authorHandle} - {formatDateTime(post.createdAt)}</p>
                     </div>
                     <Badge variant="outline">{post.sharedCount} compartilhamentos</Badge>
                   </div>
@@ -824,6 +1011,16 @@ export function SocialHub({ profile }: SocialHubProps) {
                     <Button type="button" size="sm" variant="outline" onClick={() => handleCopyPostText(post)}>
                       <Copy className="h-4 w-4" />
                       Copiar texto
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleSharePostWithFriend(post)}
+                      disabled={!socialState.friends.length}
+                    >
+                      <Users className="h-4 w-4" />
+                      Compartilhar com amigo
                     </Button>
                   </div>
                 </div>
@@ -881,3 +1078,4 @@ export function SocialHub({ profile }: SocialHubProps) {
     </div>
   );
 }
+
