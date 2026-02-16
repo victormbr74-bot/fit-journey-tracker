@@ -14,6 +14,7 @@ import {
   Send,
   Target,
   Trophy,
+  UserMinus,
   UserPlus,
   Users,
   X,
@@ -63,6 +64,13 @@ interface SocialHubProps {
   showSectionTabs?: boolean;
 }
 
+interface DiscoverableProfile {
+  handle: string;
+  normalizedHandle: string;
+  name: string;
+  goal: string;
+}
+
 const EMPTY_SOCIAL_STATE: SocialState = {
   friends: [],
   clans: [],
@@ -87,6 +95,14 @@ const STORY_DURATION_HOURS = 24;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const normalizeHandle = (value: string) => value.trim().replace(/^@+/, '').toLowerCase();
+const sanitizeHandleInput = (value: string) => normalizeHandle(value).replace(/[^a-z0-9._]/g, '');
+const formatHandleInput = (value: string) => {
+  const compact = value.trim().replace(/\s+/g, '');
+  if (!compact) return '';
+  if (compact === '@') return '@';
+  const sanitized = sanitizeHandleInput(compact);
+  return sanitized ? `@${sanitized}` : '@';
+};
 
 const formatDateTime = (isoDate: string) => {
   const date = new Date(isoDate);
@@ -159,7 +175,7 @@ const dataUrlToFile = async (dataUrl: string, filename: string): Promise<File> =
 };
 
 const notificationTypeLabel: Record<SocialNotificationType, string> = {
-  friend: 'Amigo',
+  friend: 'Seguindo',
   clan: 'CLÃ',
   goal: 'Meta',
   challenge: 'Desafio',
@@ -427,6 +443,61 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     [friendRequests, profile.id]
   );
 
+  const friendHandleSearch = useMemo(() => sanitizeHandleInput(friendHandle), [friendHandle]);
+
+  const discoverableProfiles = useMemo(() => {
+    const catalog = new Map<string, DiscoverableProfile>();
+
+    const registerProfile = (rawName: string, rawHandle: string, rawGoal?: string) => {
+      const normalizedHandle = sanitizeHandleInput(rawHandle);
+      if (!normalizedHandle || normalizedHandle === normalizedProfileHandle) return;
+
+      const fallbackName = rawName?.trim() || `@${normalizedHandle}`;
+      const nextEntry: DiscoverableProfile = {
+        handle: `@${normalizedHandle}`,
+        normalizedHandle,
+        name: fallbackName,
+        goal: rawGoal?.trim() || 'Sem meta definida',
+      };
+
+      const existing = catalog.get(normalizedHandle);
+      if (!existing) {
+        catalog.set(normalizedHandle, nextEntry);
+        return;
+      }
+
+      if (existing.name.startsWith('@') && !nextEntry.name.startsWith('@')) {
+        existing.name = nextEntry.name;
+      }
+      if (existing.goal === 'Sem meta definida' && nextEntry.goal !== 'Sem meta definida') {
+        existing.goal = nextEntry.goal;
+      }
+    };
+
+    socialState.friends.forEach((friend) => registerProfile(friend.name, friend.handle, friend.goal));
+    friendRequests.forEach((request) => {
+      registerProfile(request.senderName, request.senderHandle, request.senderGoal);
+      registerProfile(request.receiverName, request.receiverHandle, request.receiverGoal);
+    });
+    globalPosts.forEach((post) => registerProfile(post.authorName, post.authorHandle));
+    globalStories.forEach((story) => registerProfile(story.authorName, story.authorHandle));
+
+    return Array.from(catalog.values()).sort((a, b) => a.handle.localeCompare(b.handle));
+  }, [friendRequests, globalPosts, globalStories, normalizedProfileHandle, socialState.friends]);
+
+  const filteredDiscoverableProfiles = useMemo(() => {
+    if (!friendHandle.startsWith('@')) return [];
+    if (!friendHandleSearch) return discoverableProfiles.slice(0, 8);
+
+    return discoverableProfiles
+      .filter(
+        (candidate) =>
+          candidate.normalizedHandle.includes(friendHandleSearch) ||
+          candidate.name.toLowerCase().includes(friendHandleSearch)
+      )
+      .slice(0, 8);
+  }, [discoverableProfiles, friendHandle, friendHandleSearch]);
+
   const relatedAcceptedRequests = useMemo(
     () =>
       friendRequests.filter((request) => {
@@ -550,22 +621,44 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     toast.error('Permissao de notificacoes nao concedida.');
   };
 
+  const handleFriendHandleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setFriendHandle(formatHandleInput(event.target.value));
+  };
+
+  const handleSelectDiscoverableProfile = (candidate: DiscoverableProfile) => {
+    setFriendHandle(candidate.handle);
+    if (!friendName.trim() || friendName.trim().startsWith('@')) {
+      setFriendName(candidate.name.startsWith('@') ? '' : candidate.name);
+    }
+    if (!friendGoal.trim()) {
+      setFriendGoal(candidate.goal);
+    }
+  };
+
   const handleAddFriend = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const receiverName = friendName.trim();
-    const receiverHandleValue = normalizeHandle(friendHandle);
-    if (!receiverName || !receiverHandleValue) {
-      toast.error('Preencha nome e usuario do amigo.');
+    const receiverHandleValue = sanitizeHandleInput(friendHandle);
+    if (!receiverHandleValue) {
+      toast.error('Informe o @usuario para seguir.');
       return;
     }
 
+    const selectedProfile = discoverableProfiles.find(
+      (candidate) => candidate.normalizedHandle === receiverHandleValue
+    );
+    const receiverNameCandidate = friendName.trim() || selectedProfile?.name || receiverHandleValue;
+    const receiverName = receiverNameCandidate.startsWith('@')
+      ? receiverNameCandidate.slice(1)
+      : receiverNameCandidate;
+    const receiverGoalLabel = friendGoal.trim() || selectedProfile?.goal || 'Sem meta definida';
+
     if (receiverHandleValue === normalizedProfileHandle) {
-      toast.error('Nao e possivel enviar solicitacao para voce mesmo.');
+      toast.error('Nao e possivel seguir voce mesmo.');
       return;
     }
 
     if (socialState.friends.some((friend) => normalizeHandle(friend.handle) === receiverHandleValue)) {
-      toast.error('Esse usuario ja faz parte da sua lista de amigos.');
+      toast.error('Voce ja segue esse usuario.');
       return;
     }
 
@@ -577,7 +670,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     );
 
     if (hasOutgoingPending) {
-      toast.error('Solicitacao ja enviada para esse usuario.');
+      toast.error('Solicitacao para seguir ja enviada para esse usuario.');
       return;
     }
 
@@ -589,7 +682,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     );
 
     if (hasIncomingPending) {
-      toast.info('Esse usuario ja te enviou solicitacao. Aceite na lista de recebidas.');
+      toast.info('Esse usuario ja solicitou seguir voce. Aceite na lista de recebidas.');
       return;
     }
 
@@ -601,7 +694,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       senderGoal: PROFILE_GOAL_LABEL[profile.goal],
       receiverName,
       receiverHandle: `@${receiverHandleValue}`,
-      receiverGoal: friendGoal.trim() || 'Sem meta definida',
+      receiverGoal: receiverGoalLabel,
       status: 'pending',
       createdAt: new Date().toISOString(),
     };
@@ -610,13 +703,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     pushNotification({
       type: 'friend',
       title: 'Solicitacao enviada',
-      description: `Aguardando ${receiverName} aceitar sua amizade.`,
+      description: `Aguardando ${receiverName} aceitar seu pedido para seguir.`,
     });
 
     setFriendName('');
     setFriendHandle('');
     setFriendGoal('');
-    toast.success('Solicitacao de amizade enviada.');
+    toast.success('Solicitacao para seguir enviada.');
   };
 
   const handleAcceptFriendRequest = (requestId: string) => {
@@ -634,10 +727,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     pushNotification({
       type: 'friend',
-      title: 'Amizade confirmada',
-      description: `Voce e ${request.senderName} agora sao amigos.`,
+      title: 'Seguindo confirmado',
+      description: `Agora voce e ${request.senderName} se seguem.`,
     });
-    toast.success('Solicitacao aceita.');
+    toast.success('Solicitacao para seguir aceita.');
   };
 
   const handleRejectFriendRequest = (requestId: string) => {
@@ -653,7 +746,45 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       )
     );
 
-    toast.success('Solicitacao recusada.');
+    toast.success('Solicitacao para seguir recusada.');
+  };
+
+  const handleRemoveFriend = (friendId: string) => {
+    const friend = friendsById.get(friendId);
+    if (!friend) return;
+
+    const normalizedFriendHandle = sanitizeHandleInput(friend.handle);
+
+    setSocialState((previous) => ({
+      ...previous,
+      friends: previous.friends.filter((item) => item.id !== friendId),
+      clans: previous.clans.map((clan) => ({
+        ...clan,
+        memberIds: clan.memberIds.filter((memberId) => memberId !== friendId),
+      })),
+      chatMessages: previous.chatMessages.filter((message) => message.friendId !== friendId),
+    }));
+
+    setClanMemberIds((previous) => previous.filter((memberId) => memberId !== friendId));
+    setFriendRequests((previous) =>
+      sanitizeFriendRequests(
+        previous.filter((request) => {
+          const senderHandle = sanitizeHandleInput(request.senderHandle);
+          const receiverHandle = sanitizeHandleInput(request.receiverHandle);
+          const isBetweenUsers =
+            (senderHandle === normalizedProfileHandle && receiverHandle === normalizedFriendHandle) ||
+            (senderHandle === normalizedFriendHandle && receiverHandle === normalizedProfileHandle);
+          return !isBetweenUsers;
+        })
+      )
+    );
+
+    pushNotification({
+      type: 'friend',
+      title: 'Seguindo removido',
+      description: `Voce deixou de seguir ${friend.name}.`,
+    });
+    toast.success(`${friend.name} removido de quem voce segue.`);
   };
 
   const handleToggleClanMember = (friendId: string, checked: boolean | 'indeterminate') => {
@@ -672,7 +803,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       return;
     }
     if (!clanMemberIds.length) {
-      toast.error('Selecione ao menos 1 amigo para o CLÃ.');
+      toast.error('Selecione ao menos 1 perfil seguido para o CLA.');
       return;
     }
 
@@ -989,7 +1120,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const handleSendChatMessage = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!activeChatFriendId) {
-      toast.error('Selecione um amigo para conversar.');
+      toast.error('Selecione quem voce segue para conversar.');
       return;
     }
     const text = chatInput.trim();
@@ -1008,7 +1139,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const handleSharePostWithFriend = (post: SocialFeedPost) => {
     const friendId = feedShareFriendId || activeChatFriendId;
     if (!friendId) {
-      toast.error('Selecione um amigo para compartilhar.');
+      toast.error('Selecione quem voce segue para compartilhar.');
       return;
     }
 
@@ -1027,8 +1158,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setActiveChatFriendId(friendId);
     pushNotification({
       type: 'chat',
-      title: 'Post enviado para amigo',
-      description: `${friend?.name || 'Amigo'} recebeu um compartilhamento do feed.`,
+      title: 'Post enviado para quem voce segue',
+      description: `${friend?.name || 'Contato'} recebeu um compartilhamento do feed.`,
     });
     toast.success('Post compartilhado no chat.');
   };
@@ -1053,7 +1184,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     <div className="pb-24 md:pb-8 space-y-6">
       <div>
         <p className="text-sm text-muted-foreground">
-          Amigos, notificacoes, CLÃs com metas e desafios coletivos em um unico lugar.
+          Seguindo, notificacoes, CLAs com metas e desafios coletivos em um unico lugar.
         </p>
         <h1 className="mt-1 text-2xl md:text-3xl font-bold">
           Comunidade <span className="gradient-text">FitTrack</span>
@@ -1083,7 +1214,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       >
         {showSectionTabs && (
           <TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-5">
-            <TabsTrigger value="friends" className="py-2 text-xs md:text-sm">Amigos</TabsTrigger>
+            <TabsTrigger value="friends" className="py-2 text-xs md:text-sm">Seguindo</TabsTrigger>
             <TabsTrigger value="clans" className="py-2 text-xs md:text-sm">CLÃ</TabsTrigger>
             <TabsTrigger value="chat" className="py-2 text-xs md:text-sm">Chat</TabsTrigger>
             <TabsTrigger value="feed" className="py-2 text-xs md:text-sm">Feed</TabsTrigger>
@@ -1094,40 +1225,68 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         <TabsContent value="friends" className="space-y-4">
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle className="text-lg">Solicitacoes de amizade</CardTitle>
+              <CardTitle className="text-lg">Solicitacoes para seguir</CardTitle>
               <CardDescription>
-                Envie solicitacoes e aguarde o aceite do destinatario.
+                Busque por @usuario e envie o pedido para seguir.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 xl:grid-cols-2">
               <form className="space-y-3" onSubmit={handleAddFriend}>
                 <div className="space-y-2">
-                  <Label htmlFor="friend-name">Nome</Label>
+                  <Label htmlFor="friend-handle">Buscar por @usuario</Label>
+                  <Input
+                    id="friend-handle"
+                    value={friendHandle}
+                    onChange={handleFriendHandleChange}
+                    placeholder="@anafit"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Digite "@" para ver sugestoes de perfis.
+                  </p>
+                  {!!filteredDiscoverableProfiles.length && (
+                    <div className="max-h-40 overflow-y-auto rounded-lg border border-border/70 bg-card/50 p-1">
+                      {filteredDiscoverableProfiles.map((candidate) => (
+                        <button
+                          key={candidate.normalizedHandle}
+                          type="button"
+                          onClick={() => handleSelectDiscoverableProfile(candidate)}
+                          className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-secondary/60"
+                        >
+                          <span className="line-clamp-1 text-sm font-medium">{candidate.name}</span>
+                          <span className="text-xs text-muted-foreground">{candidate.handle}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="friend-name">Nome (opcional)</Label>
                   <Input
                     id="friend-name"
                     value={friendName}
                     onChange={(event) => setFriendName(event.target.value)}
-                    placeholder="Nome do destinatario"
+                    placeholder="Nome do perfil (opcional)"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="friend-handle">Usuario</Label>
-                  <Input id="friend-handle" value={friendHandle} onChange={(event) => setFriendHandle(event.target.value)} placeholder="@anafit" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="friend-goal">Meta do amigo</Label>
-                  <Input id="friend-goal" value={friendGoal} onChange={(event) => setFriendGoal(event.target.value)} placeholder="Ex: correr 5 km" />
+                  <Label htmlFor="friend-goal">Objetivo do perfil</Label>
+                  <Input
+                    id="friend-goal"
+                    value={friendGoal}
+                    onChange={(event) => setFriendGoal(event.target.value)}
+                    placeholder="Ex: correr 5 km"
+                  />
                 </div>
                 <Button type="submit" variant="energy" className="w-full">
                   <UserPlus className="h-4 w-4" />
-                  Enviar solicitacao
+                  Enviar pedido para seguir
                 </Button>
               </form>
 
               <div className="space-y-3">
-                <h3 className="font-semibold">Solicitacoes recebidas</h3>
+                <h3 className="font-semibold">Pedidos recebidos</h3>
                 {!incomingFriendRequests.length && (
-                  <p className="text-sm text-muted-foreground">Nenhuma solicitacao pendente.</p>
+                  <p className="text-sm text-muted-foreground">Nenhum pedido pendente.</p>
                 )}
                 {incomingFriendRequests.map((request) => (
                   <div key={request.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
@@ -1154,27 +1313,41 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle className="text-lg">Rede de amigos</CardTitle>
+              <CardTitle className="text-lg">Rede de seguindo</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 xl:grid-cols-2">
               <div className="space-y-2">
-                <h3 className="font-semibold">Amigos confirmados</h3>
+                <h3 className="font-semibold">Perfis que voce segue</h3>
                 {!socialState.friends.length && (
-                  <p className="text-sm text-muted-foreground">Nenhum amigo confirmado ainda.</p>
+                  <p className="text-sm text-muted-foreground">Voce ainda nao segue ninguem.</p>
                 )}
                 {socialState.friends.map((friend) => (
-                  <div key={friend.id} className="rounded-lg border border-border/70 bg-card/40 p-3">
-                    <p className="font-semibold">{friend.name}</p>
-                    <p className="text-sm text-muted-foreground">{friend.handle}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Meta: {friend.goal}</p>
+                  <div key={friend.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold">{friend.name}</p>
+                        <p className="text-sm text-muted-foreground">{friend.handle}</p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => handleRemoveFriend(friend.id)}
+                      >
+                        <UserMinus className="h-4 w-4" />
+                        Remover
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Meta: {friend.goal}</p>
                   </div>
                 ))}
               </div>
 
               <div className="space-y-2">
-                <h3 className="font-semibold">Solicitacoes enviadas</h3>
+                <h3 className="font-semibold">Pedidos enviados</h3>
                 {!outgoingPendingFriendRequests.length && (
-                  <p className="text-sm text-muted-foreground">Nenhuma solicitacao pendente.</p>
+                  <p className="text-sm text-muted-foreground">Nenhum pedido pendente.</p>
                 )}
                 {outgoingPendingFriendRequests.map((request) => (
                   <div key={request.id} className="rounded-lg border border-border/70 bg-card/40 p-3">
@@ -1192,7 +1365,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="text-lg">Criacao de CLÃ</CardTitle>
-              <CardDescription>Adicione amigos e defina metas e desafios juntos.</CardDescription>
+              <CardDescription>Adicione perfis que voce segue e defina metas e desafios juntos.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 xl:grid-cols-2">
               <form className="space-y-3" onSubmit={handleCreateClan}>
@@ -1207,7 +1380,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                 <div className="space-y-2">
                   <Label>Membros</Label>
                   <div className="rounded-lg border border-border/70 p-2 max-h-40 overflow-y-auto space-y-2">
-                    {!socialState.friends.length && <p className="text-sm text-muted-foreground">Adicione amigos primeiro.</p>}
+                    {!socialState.friends.length && <p className="text-sm text-muted-foreground">Siga perfis primeiro.</p>}
                     {socialState.friends.map((friend) => (
                       <label key={friend.id} className="flex items-center justify-between gap-3 rounded-md p-2 hover:bg-secondary/50">
                         <span className="text-sm">{friend.name}</span>
@@ -1287,7 +1460,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       <p className="font-semibold">{clan.name}</p>
                       <p className="text-xs text-muted-foreground">Criado em {formatDate(clan.createdAt)}</p>
                     </div>
-                    <Badge variant="outline">{clan.memberIds.length} amigos</Badge>
+                    <Badge variant="outline">{clan.memberIds.length} seguindo</Badge>
                   </div>
                   {clan.description && <p className="text-sm text-muted-foreground">{clan.description}</p>}
 
@@ -1343,7 +1516,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="text-lg">Chat estilo WhatsApp</CardTitle>
-              <CardDescription>Converse e compartilhe posts direto com seus amigos.</CardDescription>
+              <CardDescription>Converse e compartilhe posts direto com quem voce segue.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-2">
@@ -1354,7 +1527,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                   value={activeChatFriendId}
                   onChange={(event) => setActiveChatFriendId(event.target.value)}
                 >
-                  {!socialState.friends.length && <option value="">Nenhum amigo disponivel</option>}
+                  {!socialState.friends.length && <option value="">Nenhum perfil seguido disponivel</option>}
                   {socialState.friends.map((friend) => (
                     <option key={friend.id} value={friend.id}>
                       {friend.name}
@@ -1364,7 +1537,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               </div>
 
               {!socialState.friends.length && (
-                <p className="text-sm text-muted-foreground">Adicione amigos para iniciar o chat.</p>
+                <p className="text-sm text-muted-foreground">Siga perfis para iniciar o chat.</p>
               )}
 
               {!!socialState.friends.length && activeChatFriend && (
@@ -1542,16 +1715,16 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="text-lg">Feed da comunidade</CardTitle>
-              <CardDescription>Compartilhe no WhatsApp, Instagram e no chat entre amigos.</CardDescription>
+              <CardDescription>Compartilhe no WhatsApp, Instagram e no chat com quem voce segue.</CardDescription>
               <div className="space-y-2">
-                <Label htmlFor="feed-share-friend">Compartilhar com amigo (chat)</Label>
+                <Label htmlFor="feed-share-friend">Compartilhar com quem voce segue (chat)</Label>
                 <select
                   id="feed-share-friend"
                   className="flex h-12 w-full rounded-lg border border-border bg-secondary/50 px-3 text-sm"
                   value={feedShareFriendId}
                   onChange={(event) => setFeedShareFriendId(event.target.value)}
                 >
-                  {!socialState.friends.length && <option value="">Nenhum amigo disponivel</option>}
+                  {!socialState.friends.length && <option value="">Nenhum perfil seguido disponivel</option>}
                   {socialState.friends.map((friend) => (
                     <option key={friend.id} value={friend.id}>
                       {friend.name}
@@ -1598,7 +1771,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       disabled={!socialState.friends.length}
                     >
                       <Users className="h-4 w-4" />
-                      Compartilhar com amigo
+                      Compartilhar no chat
                     </Button>
                   </div>
                 </div>
@@ -1628,7 +1801,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           {!!incomingFriendRequests.length && (
             <Card className="glass-card">
               <CardHeader>
-                <CardTitle className="text-lg">Solicitacoes de amizade pendentes</CardTitle>
+                <CardTitle className="text-lg">Solicitacoes para seguir pendentes</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 {incomingFriendRequests.map((request) => (
@@ -1781,4 +1954,3 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     </div>
   );
 }
-
