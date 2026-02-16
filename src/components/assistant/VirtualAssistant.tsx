@@ -33,6 +33,7 @@ type AssistantRole = 'assistant' | 'user';
 type FocusId = 'peito' | 'costas' | 'pernas' | 'ombros' | 'bracos' | 'core' | 'cardio';
 type PendingAction = 'workout' | 'diet' | 'reminder' | null;
 type NotificationState = NotificationPermission | 'unsupported';
+const ASSISTANT_NAME = 'PERSONAL AMIGO';
 
 interface AssistantMessage {
   id: string;
@@ -81,12 +82,31 @@ const focusKeywords: Record<FocusId, string[]> = {
   cardio: ['cardio', 'corrida', 'esteira', 'bike', 'hiit'],
 };
 
+const goalLabels: Record<WorkoutPlan['goal'], string> = {
+  lose_weight: 'Perder peso',
+  gain_muscle: 'Ganhar massa',
+  maintain: 'Manter forma',
+  endurance: 'Resistencia',
+};
+
+const dayWords: Record<string, number> = {
+  um: 1,
+  uma: 1,
+  dois: 2,
+  duas: 2,
+  tres: 3,
+  quatro: 4,
+  cinco: 5,
+  seis: 6,
+  sete: 7,
+};
+
 const quickPrompts = [
-  'Quero um treino focado em pernas 4 dias',
-  'Monta uma dieta para perder peso',
-  'Como estao meus desafios hoje?',
-  'Me lembre de treinar 18:30',
-  'Estou sem motivacao hoje',
+  'Monta meu treino de hoje com foco em pernas',
+  'Quero uma dieta para perder peso',
+  'Como esta meu progresso da semana?',
+  'Me lembre de treinar as 18:30',
+  'Quero conversar, estou sem motivacao',
 ];
 
 const responseOpeners = ['Perfeito.', 'Boa.', 'Fechado.', 'Excelente.'];
@@ -96,6 +116,13 @@ const motivationalPhrases = [
   'Um treino bom hoje vale mais do que um treino perfeito nunca feito.',
   'Seu progresso vem da frequencia, nao da perfeicao.',
   'Vamos de passo curto e constante. Funciona.',
+];
+
+const emotionalSupportPhrases = [
+  'Entendi voce, e faz sentido se sentir assim.',
+  'Obrigado por abrir isso comigo.',
+  'Voce nao esta atrasado, voce esta construindo constancia.',
+  'Vamos deixar leve e pratico para caber no seu dia.',
 ];
 
 const emptyState = (): ConversationState => ({
@@ -136,8 +163,8 @@ const welcomeMessage = (name: string): AssistantMessage => ({
   id: crypto.randomUUID(),
   role: 'assistant',
   text:
-    `Oi ${name}. Sou seu assistente virtual com memoria de conversa.\n` +
-    'Me diga naturalmente o que voce quer e eu vou perguntando os detalhes.',
+    `Oi ${name}. Eu sou o ${ASSISTANT_NAME}, seu parceiro de treino, dieta e rotina.\n` +
+    'Me conta como voce esta hoje que eu te ajudo no proximo passo.',
   createdAt: nowIso(),
 });
 
@@ -149,10 +176,48 @@ const defaultFocusesForGoal = (goal: WorkoutPlan['goal']): FocusId[] => {
 };
 
 const detectGoal = (normalizedMessage: string): WorkoutPlan['goal'] | null => {
-  if (containsAny(normalizedMessage, ['perder peso', 'secar', 'emagrecer'])) return 'lose_weight';
-  if (containsAny(normalizedMessage, ['ganhar massa', 'hipertrofia', 'ganho muscular'])) return 'gain_muscle';
-  if (containsAny(normalizedMessage, ['resistencia', 'endurance'])) return 'endurance';
-  if (containsAny(normalizedMessage, ['manter', 'manutencao'])) return 'maintain';
+  if (
+    containsAny(normalizedMessage, [
+      'perder peso',
+      'secar',
+      'emagrecer',
+      'queimar gordura',
+      'definir',
+      'cutting',
+    ])
+  ) {
+    return 'lose_weight';
+  }
+
+  if (
+    containsAny(normalizedMessage, [
+      'ganhar massa',
+      'hipertrofia',
+      'ganho muscular',
+      'massa magra',
+      'ficar forte',
+      'bulking',
+    ])
+  ) {
+    return 'gain_muscle';
+  }
+
+  if (
+    containsAny(normalizedMessage, [
+      'resistencia',
+      'endurance',
+      'folego',
+      'correr mais',
+      '5k',
+      '10k',
+      'meia maratona',
+      'maratona',
+    ])
+  ) {
+    return 'endurance';
+  }
+
+  if (containsAny(normalizedMessage, ['manter', 'manutencao', 'equilibrar', 'saude'])) return 'maintain';
   return null;
 };
 
@@ -169,12 +234,31 @@ const extractFocuses = (normalizedMessage: string): FocusId[] => {
 };
 
 const extractDays = (normalizedMessage: string): number | null => {
-  const match = normalizedMessage.match(/(\d+)\s*(dias|dia|x|vezes)/);
-  if (!match) return null;
+  const compactMatch = normalizedMessage.match(/\b(\d+)\s*x\b/);
+  if (compactMatch) {
+    const value = Number(compactMatch[1]);
+    if (Number.isFinite(value)) return Math.max(1, Math.min(7, value));
+  }
 
-  const value = Number(match[1]);
-  if (!Number.isFinite(value)) return null;
-  return Math.max(1, Math.min(7, value));
+  const numericMatch = normalizedMessage.match(/\b(\d+)\s*(dias|dia|vezes|treinos|treino)?\b/);
+  if (numericMatch) {
+    const value = Number(numericMatch[1]);
+    if (Number.isFinite(value)) return Math.max(1, Math.min(7, value));
+  }
+
+  for (const [word, value] of Object.entries(dayWords)) {
+    if (
+      normalizedMessage.includes(`${word} dias`) ||
+      normalizedMessage.includes(`${word} dia`) ||
+      normalizedMessage.includes(`${word} vezes`) ||
+      normalizedMessage.includes(`${word} treinos`) ||
+      normalizedMessage.includes(`${word} treino`)
+    ) {
+      return value;
+    }
+  }
+
+  return null;
 };
 
 const extractTime = (message: string): { hours: number; minutes: number } | null => {
@@ -253,7 +337,7 @@ const buildWorkoutPlan = (
   return {
     id: crypto.randomUUID(),
     name: `Plano focado em ${finalFocuses.map((focus) => focusLabels[focus]).join(', ')}`,
-    description: `Treino criado pelo assistente para ${userName}.`,
+    description: `Treino criado pelo ${ASSISTANT_NAME} para ${userName}.`,
     daysPerWeek: daysList.length,
     days: daysList,
     goal,
@@ -339,15 +423,23 @@ export function VirtualAssistant() {
     if (!profile) return 'Complete seu perfil para eu gerar um resumo completo.';
 
     const totalDistance = runSessions.reduce((sum, session) => sum + session.distance, 0);
+    const pendingReminders = reminders.filter((reminder) => !reminder.done).length;
     const completedChallenges = userChallenges.filter((challenge) => challenge.is_completed).length;
     const pendingChallenges = userChallenges.filter((challenge) => !challenge.is_completed).length;
+    const lastRun = runSessions[0];
+    const lastRunSummary = lastRun
+      ? `${lastRun.distance.toFixed(1)} km em ${Math.max(1, Math.round(lastRun.duration / 60))} min`
+      : 'sem corrida registrada';
 
     return [
       `Resumo rapido para voce, ${profile.name.split(' ')[0]}:`,
+      `- Objetivo: ${goalLabels[profile.goal]}`,
       `- Pontos: ${profile.points}`,
       `- Corridas: ${runSessions.length} (${totalDistance.toFixed(1)} km)`,
+      `- Ultima corrida: ${lastRunSummary}`,
       `- Desafios concluidos: ${completedChallenges}`,
       `- Desafios pendentes: ${pendingChallenges}`,
+      `- Lembretes pendentes: ${pendingReminders}`,
     ].join('\n');
   };
 
@@ -356,13 +448,69 @@ export function VirtualAssistant() {
 
     return [
       `Nome: ${profile.name}`,
-      `Objetivo: ${profile.goal}`,
+      `Objetivo: ${goalLabels[profile.goal]} (${profile.goal})`,
       `Treinos por semana: ${profile.training_frequency}`,
       `Pontos: ${profile.points}`,
       `Peso: ${profile.weight}kg`,
       `Altura: ${profile.height}cm`,
     ].join(' | ');
   };
+
+  const buildRemindersContext = (): string => {
+    const pendingReminders = sortedReminders.filter((reminder) => !reminder.done);
+    if (pendingReminders.length === 0) return 'Sem lembretes pendentes.';
+
+    return pendingReminders
+      .slice(0, 3)
+      .map((reminder) => `${reminder.title} (${formatReminderDate(reminder.dueAt)})`)
+      .join(' | ');
+  };
+
+  const buildTodayPlan = (): string => {
+    if (!profile) return 'Complete seu perfil para eu montar um plano do dia.';
+
+    const pendingChallenges = userChallenges.filter((challenge) => !challenge.is_completed && challenge.challenge);
+    const nextChallenge = pendingChallenges[0];
+    const nextReminder = sortedReminders.find((reminder) => !reminder.done);
+    const lastDistance = runSessions[0]?.distance ?? 0;
+    const suggestedDistance = Math.max(2, Number((lastDistance + 0.5).toFixed(1)));
+    const suggestedMinutes =
+      profile.goal === 'endurance' ? 45 : profile.goal === 'gain_muscle' ? 50 : profile.goal === 'lose_weight' ? 40 : 35;
+
+    const lines = [
+      `Plano rapido de hoje para ${profile.name.split(' ')[0]}:`,
+      `- Foco principal: ${goalLabels[profile.goal]}.`,
+      `- Treino sugerido: ${suggestedMinutes} minutos (${profile.training_frequency}x na semana).`,
+    ];
+
+    if (nextChallenge?.challenge) {
+      lines.push(
+        `- Priorize o desafio: ${nextChallenge.challenge.name} (${nextChallenge.current_value}/${nextChallenge.challenge.target_value}).`
+      );
+    } else {
+      lines.push('- Desafios de hoje: sem pendencias relevantes.');
+    }
+
+    if (nextReminder) {
+      lines.push(`- Proximo lembrete: ${nextReminder.title} (${formatReminderDate(nextReminder.dueAt)}).`);
+    } else {
+      lines.push('- Sem lembretes ativos. Se quiser, ja crio um para treino ou hidratacao.');
+    }
+
+    if (runSessions.length === 0) {
+      lines.push('- Bonus: registre uma corrida leve de 20 minutos para iniciar seu historico.');
+    } else {
+      lines.push(`- Bonus: tente bater ${suggestedDistance.toFixed(1)} km no cardio de hoje.`);
+    }
+
+    return lines.join('\n');
+  };
+
+const buildRecentHistory = (): string =>
+  messages
+    .slice(-8)
+      .map((message) => `${message.role === 'assistant' ? ASSISTANT_NAME : 'Usuario'}: ${message.text}`)
+    .join('\n');
 
   const humanizeWithAI = async ({
     userMessage,
@@ -375,15 +523,15 @@ export function VirtualAssistant() {
   }): Promise<string | null> => {
     if (aiFailures >= 2) return null;
 
-    const history = messages
-      .slice(-6)
-      .map((message) => `${message.role === 'assistant' ? 'Assistente' : 'Usuario'}: ${message.text}`)
-      .join('\n');
+    const history = buildRecentHistory();
 
     const systemPrompt =
-      'Voce e um assistente virtual de fitness em portugues-BR, humano, natural e objetivo. ' +
-      'Reescreva a resposta base em tom conversacional, mantendo exatamente fatos, numeros, horarios e instrucoes. ' +
-      'Nao invente dados. Nao use markdown pesado. Limite em no maximo 90 palavras.';
+      `Voce e o ${ASSISTANT_NAME}, um coach de fitness em portugues-BR, acolhedor, natural e objetivo. ` +
+      'Reescreva a resposta base sem alterar fatos, numeros, horarios, metas ou instrucoes. ' +
+      'Mantenha tom humano, com linguagem de conversa real e sem parecer robotico. ' +
+      'Pode incluir 1 pergunta curta de continuidade quando fizer sentido. ' +
+      'Nao invente dados. Se a resposta base ja estiver clara, faca ajustes minimos. ' +
+      'Sem markdown pesado e no maximo 130 palavras.';
 
     const userPrompt = [
       `Perfil: ${buildProfileContext()}`,
@@ -402,8 +550,8 @@ export function VirtualAssistant() {
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
-          temperature: 0.7,
-          maxTokens: 220,
+          temperature: 0.75,
+          maxTokens: 260,
         },
       });
 
@@ -416,6 +564,63 @@ export function VirtualAssistant() {
       return data.reply.trim();
     } catch (error) {
       console.error('Erro ao chamar IA remota:', error);
+      setAiFailures((current) => current + 1);
+      return null;
+    }
+  };
+
+  const askAIForFlexibleReply = async ({
+    userMessage,
+    pendingAction,
+  }: {
+    userMessage: string;
+    pendingAction: PendingAction;
+  }): Promise<string | null> => {
+    if (aiFailures >= 3) return null;
+
+    const history = buildRecentHistory();
+
+    const systemPrompt =
+      `Voce e o ${ASSISTANT_NAME}, coach e parceiro de constancia do usuario no app FitTrack, em portugues-BR. ` +
+      'Responda com orientacao pratica, empatica e personalizada, usando somente o contexto fornecido. ' +
+      'Nao invente dados clinicos ou historico inexistente. ' +
+      'Valide emocao quando o usuario demonstrar cansaco, frustracao ou desanimo. ' +
+      'Se faltar informacao, faca 1 pergunta objetiva. ' +
+      'Se o usuario quiser treino, dieta ou lembrete, direcione para o fluxo com instrucoes curtas. ' +
+      'Evite respostas secas, evite listas longas e mantenha ritmo de conversa natural. ' +
+      'Maximo de 140 palavras e sem markdown.';
+
+    const userPrompt = [
+      `Perfil: ${buildProfileContext()}`,
+      `Resumo: ${generateStatusSummary().replace(/\n/g, ' | ')}`,
+      `Lembretes: ${buildRemindersContext()}`,
+      `Pendencia atual: ${pendingAction || 'nenhuma'}`,
+      history ? `Historico recente:\n${history}` : 'Historico recente: sem mensagens',
+      `Pergunta atual do usuario: ${userMessage}`,
+      'Gere apenas a resposta final.',
+    ].join('\n\n');
+
+    try {
+      const { data, error } = await supabase.functions.invoke('assistant-chat', {
+        body: {
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.6,
+          maxTokens: 320,
+        },
+      });
+
+      if (error || !data || typeof data.reply !== 'string' || !data.reply.trim()) {
+        setAiFailures((current) => current + 1);
+        return null;
+      }
+
+      setAiFailures(0);
+      return data.reply.trim();
+    } catch (error) {
+      console.error('Erro ao gerar resposta inteligente:', error);
       setAiFailures((current) => current + 1);
       return null;
     }
@@ -436,8 +641,13 @@ export function VirtualAssistant() {
       },
     };
 
-    const respond = async (text: string): Promise<string> => {
+    const detectedGoal = detectGoal(normalizedMessage);
+    const detectedFocuses = extractFocuses(normalizedMessage);
+    const detectedDays = extractDays(normalizedMessage);
+
+    const respond = async (text: string, options?: { skipHumanize?: boolean }): Promise<string> => {
       setConversationState(nextState);
+      if (options?.skipHumanize) return text;
       const rewritten = await humanizeWithAI({
         userMessage: message,
         baseReply: text,
@@ -447,14 +657,36 @@ export function VirtualAssistant() {
     };
 
     const firstName = profile?.name.split(' ')[0] || 'voce';
+    const lastAssistantMessage =
+      [...messages].reverse().find((entry) => entry.role === 'assistant')?.text || '';
+    const waitingForEnergyReply = normalizeText(lastAssistantMessage).includes('energia de 0 a 10');
 
     if (containsAny(normalizedMessage, ['oi', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'e ai'])) {
       nextState.pendingAction = null;
-      return respond(`Oi ${firstName}. Fala comigo como quiser. Quer foco em treino, dieta, desafios ou lembrete agora?`);
+      return respond(
+        `Oi ${firstName}. Eu sou o ${ASSISTANT_NAME}. Me conta como voce esta hoje e eu te ajudo com treino, dieta, rotina ou so conversa.`
+      );
     }
 
     if (containsAny(normalizedMessage, ['obrigado', 'valeu', 'brigado'])) {
-      return respond('Tamo junto. Se quiser, ja seguimos pro proximo passo.');
+      return respond('Sempre com voce. Se quiser, ja te passo o proximo passo mais leve para hoje.');
+    }
+
+    if (containsAny(normalizedMessage, ['quem e voce', 'quem e vc', 'o que voce faz', 'o que vc faz'])) {
+      nextState.pendingAction = null;
+      return respond(
+        `Sou o ${ASSISTANT_NAME}: seu parceiro para treino, dieta, desafios e organizacao da rotina. Posso montar plano, ajustar meta e te acompanhar no dia.`
+      );
+    }
+
+    if (containsAny(normalizedMessage, ['como voce esta', 'como voce ta', 'tudo bem com voce', 'ta ai'])) {
+      nextState.pendingAction = null;
+      return respond(`Estou pronto pra te ajudar, ${firstName}. Como voce esta hoje: energia alta, media ou baixa?`);
+    }
+
+    if (containsAny(normalizedMessage, ['quero conversar', 'bater papo', 'so conversar', 'apenas conversar'])) {
+      nextState.pendingAction = null;
+      return respond(`Perfeito. Vamos conversar. O que mais pesou no seu dia hoje: tempo, cansaco ou motivacao?`);
     }
 
     if (containsAny(normalizedMessage, ['abrir treino'])) {
@@ -488,6 +720,20 @@ export function VirtualAssistant() {
       return respond('Seu navegador nao suporta notificacoes locais.');
     }
 
+    if (
+      containsAny(normalizedMessage, [
+        'o que faco hoje',
+        'o que fazer hoje',
+        'plano de hoje',
+        'rotina de hoje',
+        'foco hoje',
+        'treino de hoje',
+      ])
+    ) {
+      nextState.pendingAction = null;
+      return respond(buildTodayPlan());
+    }
+
     const wantsReminder =
       containsAny(normalizedMessage, ['lembrete', 'lembrar', 'me lembre', 'me lembra']) ||
       nextState.pendingAction === 'reminder';
@@ -516,9 +762,10 @@ export function VirtualAssistant() {
     }
 
     const wantsWorkout =
-      (containsAny(normalizedMessage, ['treino', 'workout']) &&
-        containsAny(normalizedMessage, ['mont', 'ger', 'cri', 'planej', 'foc', 'ajusta'])) ||
-      nextState.pendingAction === 'workout';
+      nextState.pendingAction === 'workout' ||
+      containsAny(normalizedMessage, ['treino', 'workout', 'ficha']) ||
+      (detectedFocuses.length > 0 &&
+        containsAny(normalizedMessage, ['foco', 'focar', 'dias', 'dia', 'vezes', 'monta', 'cria', 'planeja', 'ajusta']));
 
     if (wantsWorkout) {
       if (!profile) {
@@ -526,15 +773,13 @@ export function VirtualAssistant() {
         return respond('Preciso do seu perfil para montar treino.');
       }
 
-      const goal = detectGoal(normalizedMessage);
-      const focuses = extractFocuses(normalizedMessage);
-      const days = extractDays(normalizedMessage);
+      if (detectedGoal) nextState.workout.goal = detectedGoal;
+      if (detectedFocuses.length > 0) {
+        nextState.workout.focuses = uniqueValues([...nextState.workout.focuses, ...detectedFocuses]);
+      }
+      if (detectedDays !== null) nextState.workout.days = detectedDays;
 
-      if (goal) nextState.workout.goal = goal;
-      if (focuses.length > 0) nextState.workout.focuses = uniqueValues([...nextState.workout.focuses, ...focuses]);
-      if (days !== null) nextState.workout.days = days;
-
-      if (containsAny(normalizedMessage, ['pode escolher', 'voce escolhe', 'surpreenda'])) {
+      if (containsAny(normalizedMessage, ['pode escolher', 'voce escolhe', 'surpreenda', 'decide por mim'])) {
         if (nextState.workout.focuses.length === 0) {
           nextState.workout.focuses = defaultFocusesForGoal(nextState.workout.goal || profile.goal);
         }
@@ -550,7 +795,7 @@ export function VirtualAssistant() {
 
       if (!nextState.workout.days) {
         nextState.pendingAction = 'workout';
-        return respond('Quantos dias por semana voce quer treinar?');
+        return respond('Quantos dias por semana voce quer treinar? Exemplo: 4 dias ou 4x.');
       }
 
       const finalGoal = nextState.workout.goal || profile.goal;
@@ -568,7 +813,16 @@ export function VirtualAssistant() {
     }
 
     const wantsDiet =
-      containsAny(normalizedMessage, ['dieta', 'alimentacao', 'plano alimentar', 'comida']) ||
+      containsAny(normalizedMessage, [
+        'dieta',
+        'alimentacao',
+        'plano alimentar',
+        'comida',
+        'macro',
+        'caloria',
+        'refeicao',
+        'nutricao',
+      ]) ||
       nextState.pendingAction === 'diet';
 
     if (wantsDiet) {
@@ -577,13 +831,12 @@ export function VirtualAssistant() {
         return respond('Preciso do seu perfil para gerar dieta.');
       }
 
-      const goal = detectGoal(normalizedMessage);
-      if (!goal && !containsAny(normalizedMessage, ['pode escolher', 'voce escolhe'])) {
+      if (!detectedGoal && !containsAny(normalizedMessage, ['pode escolher', 'voce escolhe', 'decide por mim'])) {
         nextState.pendingAction = 'diet';
         return respond('Claro. Qual objetivo da dieta: perder peso, ganhar massa, manter forma ou resistencia?');
       }
 
-      const finalGoal = goal || profile.goal;
+      const finalGoal = detectedGoal || profile.goal;
       const plan = generateDietPlan({
         weight: profile.weight,
         height: profile.height,
@@ -624,15 +877,40 @@ export function VirtualAssistant() {
       return respond(`Seus desafios pendentes:\n${list}\nSe quiser, diga: concluir desafio.`);
     }
 
+    if (
+      containsAny(normalizedMessage, [
+        'triste',
+        'ansios',
+        'sobrecarreg',
+        'frustr',
+        'mal hoje',
+        'sem foco',
+        'desmotivad',
+      ])
+    ) {
+      nextState.pendingAction = 'workout';
+      return respond(
+        `${pickRandom(emotionalSupportPhrases)} Posso te passar um plano leve de 20 minutos so para destravar o dia. Topa?`
+      );
+    }
+
     if (containsAny(normalizedMessage, ['motiv', 'desanim', 'cansad', 'preguica', 'sem vontade'])) {
-      return respond(`${pickRandom(motivationalPhrases)} Se quiser, me diz sua energia de 0 a 10.`);
+      return respond(`${pickRandom(motivationalPhrases)} Se quiser, me diz sua energia de 0 a 10 e eu ajusto pra hoje.`);
     }
 
     const energy = parseEnergyLevel(normalizedMessage);
-    if (energy !== null) {
-      if (energy <= 4) return respond('Entendi. Hoje vamos em um treino curto de 20 minutos, sem sobrecarga.');
-      if (energy <= 7) return respond('Boa. Energia media. Da para fazer um treino objetivo de 40 minutos.');
-      return respond('Excelente energia. Dia bom para treino forte e fechar desafios.');
+    const isEnergyMessage =
+      waitingForEnergyReply || containsAny(normalizedMessage, ['energia', 'animo', 'disposicao', 'cansaco']);
+    if (energy !== null && isEnergyMessage) {
+      if (energy <= 4) {
+        return respond(
+          `Recebi. Vamos no minimo efetivo: 20 minutos, intensidade leve e sem culpa. Se topar, eu monto isso agora pra voce.`
+        );
+      }
+      if (energy <= 7) {
+        return respond('Boa leitura. Com essa energia, um treino objetivo de 35-40 minutos fecha bem o dia. Quer que eu monte?');
+      }
+      return respond('Excelente energia. Hoje vale treino mais forte e tentativa de bater um desafio pendente. Quer plano completo?');
     }
 
     if (containsAny(normalizedMessage, ['resumo', 'status', 'progresso'])) {
@@ -648,8 +926,16 @@ export function VirtualAssistant() {
       }
     }
 
+    const aiReply = await askAIForFlexibleReply({
+      userMessage: message,
+      pendingAction: nextState.pendingAction,
+    });
+    if (aiReply) {
+      return respond(aiReply, { skipHumanize: true });
+    }
+
     return respond(
-      'Te entendi. Quer que eu te ajude agora com treino, dieta, desafios ou lembretes? Pode falar de forma natural.'
+      `Te acompanho nisso. Me diz o que voce precisa agora e eu te guio: treino, dieta, desafios, lembretes ou conversa.`
     );
   };
 
@@ -666,7 +952,7 @@ export function VirtualAssistant() {
       const reply = await handleAssistantLogic(message);
       appendMessage('assistant', reply);
     } catch (error) {
-      console.error('Erro no assistente:', error);
+      console.error(`Erro no ${ASSISTANT_NAME}:`, error);
       appendMessage('assistant', 'Tive um erro agora, mas posso tentar de novo.');
     } finally {
       setIsThinking(false);
@@ -776,7 +1062,7 @@ export function VirtualAssistant() {
         });
       }
     } catch (error) {
-      console.error('Erro ao carregar estado do assistente:', error);
+      console.error(`Erro ao carregar estado do ${ASSISTANT_NAME}:`, error);
       setConversationState(emptyState());
     }
 
@@ -813,7 +1099,7 @@ export function VirtualAssistant() {
           toast.info(`Lembrete: ${reminder.title}`);
 
           if (notificationState === 'granted' && typeof window !== 'undefined' && 'Notification' in window) {
-            new Notification('FitTrack - Lembrete', { body: reminder.title });
+            new Notification(`${ASSISTANT_NAME} - Lembrete`, { body: reminder.title });
           }
 
           return { ...reminder, notified: true };
@@ -834,7 +1120,7 @@ export function VirtualAssistant() {
     return (
       <div className="pb-24 md:pb-8">
         <Card className="glass-card">
-          <CardContent className="py-16 text-center text-muted-foreground">Carregando assistente...</CardContent>
+          <CardContent className="py-16 text-center text-muted-foreground">Carregando {ASSISTANT_NAME}...</CardContent>
         </Card>
       </div>
     );
@@ -844,10 +1130,10 @@ export function VirtualAssistant() {
     <div className="pb-24 md:pb-8 space-y-6">
       <div>
         <h1 className="text-2xl md:text-3xl font-bold">
-          Assistente <span className="gradient-text">Virtual</span>
+          <span className="gradient-text">{ASSISTANT_NAME}</span>
         </h1>
         <p className="text-muted-foreground mt-1">
-          Conversa natural para treino, dieta, desafios, lembretes e tarefas do sistema.
+          Conversa humana para treino, dieta, desafios, lembretes e apoio no dia a dia.
         </p>
       </div>
 
@@ -856,10 +1142,10 @@ export function VirtualAssistant() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <CardTitle className="flex items-center gap-2">
               <Bot className="w-5 h-5 text-primary" />
-              Chat do Assistente
+              Chat com {ASSISTANT_NAME}
             </CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">Modo IA conversacional</Badge>
+              <Badge variant="secondary">Modo conversa humana</Badge>
               <Badge variant={aiFailures >= 2 ? 'outline' : 'default'}>
                 IA remota: {aiFailures >= 2 ? 'offline (fallback local)' : 'ativa'}
               </Badge>
@@ -915,7 +1201,7 @@ export function VirtualAssistant() {
             <Input
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder="Digite naturalmente o que voce quer..."
+              placeholder={`Converse com o ${ASSISTANT_NAME}...`}
               disabled={isThinking}
             />
             <Button type="submit" variant="energy" disabled={isThinking || !input.trim()}>

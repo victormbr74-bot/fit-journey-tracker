@@ -1,9 +1,11 @@
 import { Dashboard } from '@/components/dashboard/Dashboard';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
+import { Bot } from 'lucide-react';
 
 const DashboardPage = () => {
   const { user, loading: authLoading } = useAuth();
@@ -31,6 +33,15 @@ const DashboardPage = () => {
   return (
     <AppLayout>
       <Dashboard />
+      <Button
+        type="button"
+        variant="energy"
+        className="fixed bottom-24 right-4 z-[70] md:bottom-8 md:right-8"
+        onClick={() => navigate('/assistant')}
+      >
+        <Bot className="w-4 h-4" />
+        PERSONAL AMIGO
+      </Button>
     </AppLayout>
   );
 };

@@ -8,7 +8,7 @@ const navItems = [
   { path: '/workout', label: 'Treino', icon: Dumbbell },
   { path: '/diet', label: 'Dieta', icon: Utensils },
   { path: '/running', label: 'Corrida', icon: MapPin },
-  { path: '/assistant', label: 'Assistente', icon: Bot },
+  { path: '/assistant', label: 'PERSONAL AMIGO', icon: Bot },
   { path: '/profile', label: 'Perfil', icon: User },
 ];
 
