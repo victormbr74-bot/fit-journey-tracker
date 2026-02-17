@@ -1294,13 +1294,18 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     };
   }, [user?.id]);
 
+  // Prevent false onboarding redirects during logout -> login transitions.
+  // If auth is ready and there is a logged user whose profile fetch hasn't started
+  // for this session yet, report loading as true.
+  const profileLoading = loading || Boolean(!authLoading && user && !fetchedRef.current);
+
   const value: ProfileContextValue = {
     profile,
     weightHistory,
     runSessions,
     challenges,
     userChallenges,
-    loading,
+    loading: profileLoading,
     createProfile,
     updateProfile,
     checkHandleAvailability,
