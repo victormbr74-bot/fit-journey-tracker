@@ -27,6 +27,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { AppearanceSettings } from '@/components/theme/AppearanceSettings';
 import { toast } from 'sonner';
 import {
   SOCIAL_GLOBAL_FEED_STORAGE_KEY,
@@ -487,7 +488,7 @@ export function ProfilePage() {
         <h1 className="text-2xl md:text-3xl font-bold">
           <span className="gradient-text">Perfil</span>
         </h1>
-        <p className="text-muted-foreground mt-1">Seu espaco pessoal e social no FitTrack</p>
+        <p className="text-muted-foreground mt-1">Seu espaco pessoal e social no SouFit</p>
       </div>
 
       <div className="glass-card mb-6 overflow-hidden border border-border/70">
@@ -675,6 +676,8 @@ export function ProfilePage() {
           </div>
         </div>
       </div>
+
+      <AppearanceSettings />
 
       <div className="glass-card p-6 mb-6">
         <div className="flex items-center justify-between mb-6">

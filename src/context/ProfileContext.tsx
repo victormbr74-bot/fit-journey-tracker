@@ -73,6 +73,15 @@ const isMissingProfilesColumnError = (
   return combinedText.includes(normalizedColumn) && combinedText.includes("'profiles'");
 };
 
+const isProfilesUserForeignKeyError = (
+  error: { code?: string; message?: string; details?: string } | null | undefined
+) => {
+  if (!error) return false;
+  if (error.code !== '23503') return false;
+  const combinedText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
+  return combinedText.includes('profiles_id_fkey') || combinedText.includes('table "users"');
+};
+
 const BACKEND_CAPABILITIES_STORAGE_KEY = 'fit-journey.backend-capabilities';
 
 export function ProfileProvider({ children }: ProfileProviderProps) {
@@ -461,11 +470,15 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         return payload;
       };
 
-      const insertWithPayload = (payload: Record<string, unknown>) =>
-        supabase.from('profiles').insert(payload).select().single();
+      const upsertWithPayload = (payload: Record<string, unknown>) =>
+        supabase
+          .from('profiles')
+          .upsert(payload, { onConflict: 'id' })
+          .select()
+          .single();
 
       let payload = buildPayload();
-      let { data, error } = await insertWithPayload(payload);
+      let { data, error } = await upsertWithPayload(payload);
 
       if (error && (isMissingProfilesColumnError(error, 'handle') || isMissingProfilesColumnError(error, 'phone'))) {
         if (isMissingProfilesColumnError(error, 'handle')) {
@@ -475,10 +488,18 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
           disablePhoneFeature();
         }
         payload = buildPayload();
-        ({ data, error } = await insertWithPayload(payload));
+        ({ data, error } = await upsertWithPayload(payload));
       }
 
       if (error) {
+        if (isProfilesUserForeignKeyError(error)) {
+          return {
+            error: new Error(
+              'Falha de integracao no banco: execute a migration SQL para corrigir o vinculo de profiles com auth.users.'
+            ),
+          };
+        }
+
         console.error('Error creating profile:', error);
         return { error: new Error(error.message) };
       }

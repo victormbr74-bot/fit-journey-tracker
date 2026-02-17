@@ -2192,10 +2192,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   };
 
   const buildPostShareText = (post: SocialFeedPost) =>
-    `${post.caption}\n\nCompartilhado via FitTrack ${post.authorHandle}\n#FitTrack #JornadaFitness`;
+    `${post.caption}\n\nCompartilhado via SouFit ${post.authorHandle}\n#SouFit #JornadaFitness`;
 
   const buildStoryShareText = (story: SocialStory) =>
-    `${story.caption || 'Story compartilhada'}\n\nStory de ${story.authorHandle} no FitTrack\n#FitTrack #Story`;
+    `${story.caption || 'Story compartilhada'}\n\nStory de ${story.authorHandle} no SouFit\n#SouFit #Story`;
 
   const handleShareOnWhatsApp = (item: SocialFeedPost | SocialStory, type: 'post' | 'story') => {
     const text = type === 'post' ? buildPostShareText(item) : buildStoryShareText(item);
@@ -2226,9 +2226,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         );
         const canShareWithFile = typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
         if (canShareWithFile) {
-          await navigator.share({ title: 'Meu progresso no FitTrack', text, files: [file] });
+          await navigator.share({ title: 'Meu progresso no SouFit', text, files: [file] });
         } else {
-          await navigator.share({ title: 'Meu progresso no FitTrack', text });
+          await navigator.share({ title: 'Meu progresso no SouFit', text });
         }
         if (type === 'post') {
           markPostAsShared(item.id);
@@ -2513,7 +2513,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             Seguindo, notificacoes, CLAs com metas e desafios coletivos em um unico lugar.
           </p>
           <h1 className="mt-1 text-2xl md:text-3xl font-bold">
-            Comunidade <span className="gradient-text">FitTrack</span>
+            Comunidade <span className="gradient-text">SouFit</span>
           </h1>
         </div>
       )}

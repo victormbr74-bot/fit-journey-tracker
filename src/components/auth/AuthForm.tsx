@@ -85,10 +85,10 @@ export function AuthForm() {
       <div className="w-full max-w-md relative z-10 slide-up">
         <div className="flex flex-col items-center mb-8">
           <div className="w-24 h-24 mb-4">
-            <img src={soufitLogo} alt="SouFIT" className="w-full h-full object-contain" />
+            <img src={soufitLogo} alt="SouFit" className="w-full h-full object-contain" />
           </div>
           <h1 className="text-4xl font-black tracking-tight">
-            <span className="gradient-text">SouFIT</span>
+            <span className="gradient-text">SouFit</span>
           </h1>
           <p className="text-muted-foreground mt-2">Sua jornada fitness comeca aqui</p>
         </div>

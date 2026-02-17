@@ -14,37 +14,43 @@ import AssistantPage from "./pages/AssistantPage";
 import SocialSectionPage from "./pages/SocialSectionPage";
 import NotFound from "./pages/NotFound";
 import { ProfileProvider } from "@/context/ProfileContext";
+import { AppearanceProvider } from "@/context/AppearanceContext";
+import { ThemeProvider } from "@/components/theme/theme-provider";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <ProfileProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/onboarding" element={<OnboardingPage />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/workout" element={<WorkoutPage />} />
-            <Route path="/diet" element={<DietPage />} />
-            <Route path="/running" element={<RunningPage />} />
-            <Route path="/assistant" element={<AssistantPage />} />
-            <Route path="/friends" element={<SocialSectionPage section="friends" />} />
-            <Route path="/search" element={<SocialSectionPage section="search" />} />
-            <Route path="/clans" element={<SocialSectionPage section="clans" />} />
-            <Route path="/chat" element={<SocialSectionPage section="chat" />} />
-            <Route path="/notifications" element={<SocialSectionPage section="notifications" />} />
-            <Route path="/social" element={<Navigate to="/friends" replace />} />
-            <Route path="/profile" element={<ProfilePage />} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </TooltipProvider>
-    </ProfileProvider>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+      <AppearanceProvider>
+        <ProfileProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/onboarding" element={<OnboardingPage />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/workout" element={<WorkoutPage />} />
+                <Route path="/diet" element={<DietPage />} />
+                <Route path="/running" element={<RunningPage />} />
+                <Route path="/assistant" element={<AssistantPage />} />
+                <Route path="/friends" element={<SocialSectionPage section="friends" />} />
+                <Route path="/search" element={<SocialSectionPage section="search" />} />
+                <Route path="/clans" element={<SocialSectionPage section="clans" />} />
+                <Route path="/chat" element={<SocialSectionPage section="chat" />} />
+                <Route path="/notifications" element={<SocialSectionPage section="notifications" />} />
+                <Route path="/social" element={<Navigate to="/friends" replace />} />
+                <Route path="/profile" element={<ProfilePage />} />
+                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </BrowserRouter>
+          </TooltipProvider>
+        </ProfileProvider>
+      </AppearanceProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

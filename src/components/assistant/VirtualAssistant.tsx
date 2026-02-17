@@ -581,7 +581,7 @@ const buildRecentHistory = (): string =>
     const history = buildRecentHistory();
 
     const systemPrompt =
-      `Voce e o ${ASSISTANT_NAME}, coach e parceiro de constancia do usuario no app FitTrack, em portugues-BR. ` +
+      `Voce e o ${ASSISTANT_NAME}, coach e parceiro de constancia do usuario no app SouFit, em portugues-BR. ` +
       'Responda com orientacao pratica, empatica e personalizada, usando somente o contexto fornecido. ' +
       'Nao invente dados clinicos ou historico inexistente. ' +
       'Valide emocao quando o usuario demonstrar cansaco, frustracao ou desanimo. ' +

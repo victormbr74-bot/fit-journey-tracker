@@ -26,8 +26,9 @@ export function OnboardingFlow() {
   const [frequency, setFrequency] = useState(3);
   const [loading, setLoading] = useState(false);
   const [checkingHandle, setCheckingHandle] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const { checkHandleAvailability, createProfile, reserveUniqueHandle } = useProfile();
   const navigate = useNavigate();
 
@@ -103,7 +104,7 @@ export function OnboardingFlow() {
       });
 
       if (error) {
-        toast.error('Erro ao salvar perfil. Tente novamente.');
+        toast.error(error.message || 'Erro ao salvar perfil. Tente novamente.');
         console.error(error);
       } else {
         toast.success('Perfil criado com sucesso!');
@@ -117,6 +118,22 @@ export function OnboardingFlow() {
     if (currentStep > 0) {
       setCurrentStep(currentStep - 1);
     }
+  };
+
+  const handleCancel = async () => {
+    if (loading || checkingHandle || cancelling) return;
+
+    setCancelling(true);
+    const { error } = await signOut();
+
+    if (error) {
+      toast.error('Nao foi possivel cancelar agora.');
+      setCancelling(false);
+      return;
+    }
+
+    toast.info('Checklist cancelado.');
+    navigate('/');
   };
 
   const toggleMuscle = (muscleId: string) => {
@@ -398,6 +415,16 @@ export function OnboardingFlow() {
           {renderStep()}
 
           <div className="flex gap-3 mt-8">
+            <Button
+              type="button"
+              variant="ghost"
+              size="lg"
+              onClick={handleCancel}
+              className="px-4"
+              disabled={loading || checkingHandle || cancelling}
+            >
+              {cancelling ? 'Cancelando...' : 'Cancelar'}
+            </Button>
             {currentStep > 0 && (
               <Button
                 type="button"
@@ -405,7 +432,7 @@ export function OnboardingFlow() {
                 size="lg"
                 onClick={handleBack}
                 className="flex-1"
-                disabled={loading}
+                disabled={loading || cancelling}
               >
                 <ArrowLeft className="w-5 h-5" />
                 Voltar
@@ -416,7 +443,7 @@ export function OnboardingFlow() {
               variant="energy"
               size="lg"
               onClick={handleNext}
-              disabled={!canProceed() || loading || checkingHandle}
+              disabled={!canProceed() || loading || checkingHandle || cancelling}
               className="flex-1"
             >
               {loading ? 'Salvando...' : checkingHandle ? 'Validando @...' : currentStep === steps.length - 1 ? 'Comecar' : 'Proximo'}

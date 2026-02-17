@@ -191,7 +191,7 @@ export function Sidebar() {
           className="social-brand-script"
           aria-label="Abrir inicio"
         >
-          FitJourney
+          SouFit
         </button>
 
         <nav className="mt-5 flex flex-1 flex-col gap-1">
@@ -260,7 +260,7 @@ export function Sidebar() {
           className="social-brand-script text-[1.95rem]"
           aria-label="Abrir inicio"
         >
-          FitJourney
+          SouFit
         </button>
 
         <button
