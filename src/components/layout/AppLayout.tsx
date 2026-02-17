@@ -1,4 +1,5 @@
 import { ReactNode } from 'react';
+import { BottomNav } from './BottomNav';
 import { Sidebar } from './Sidebar';
 
 interface AppLayoutProps {
@@ -7,13 +8,14 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="social-app-shell min-h-screen bg-background">
       <Sidebar />
-      <main className="flex-1 p-4 pt-20 md:p-8 md:pt-8 overflow-auto">
-        <div className="max-w-4xl mx-auto">
+      <main className="flex-1 overflow-auto px-3 pb-24 pt-20 md:px-6 md:pb-8 md:pt-6 md:pl-[92px]">
+        <div className="mx-auto w-full max-w-[1024px]">
           {children}
         </div>
       </main>
+      <BottomNav />
     </div>
   );
 }

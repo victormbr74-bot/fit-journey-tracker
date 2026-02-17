@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bell,
   Bot,
   Dumbbell,
-  LayoutDashboard,
+  Heart,
+  Home,
   LogOut,
   MapPin,
   Menu,
   MessageCircle,
   Search,
+  SquarePlay,
   Trophy,
   User,
-  Users,
   Utensils,
 } from 'lucide-react';
 
@@ -22,19 +22,28 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { SOCIAL_HUB_STORAGE_PREFIX } from '@/lib/storageKeys';
 import { normalizeHandle } from '@/lib/handleUtils';
 import { supabase } from '@/integrations/supabase/client';
+import { cn } from '@/lib/utils';
 
-const navItems = [
-  { path: '/dashboard', label: 'HOME FEED', icon: LayoutDashboard },
-  { path: '/search', label: 'PESQUISA', icon: Search },
-  { path: '/friends', label: 'AMIGOS', icon: Users },
+const primaryNavItems = [
+  { path: '/dashboard', label: 'Inicio', icon: Home },
+  { path: '/search', label: 'Pesquisar', icon: Search },
+  { path: '/friends', label: 'Rede', icon: SquarePlay },
+  { path: '/chat', label: 'Mensagens', icon: MessageCircle },
+  { path: '/notifications', label: 'Atividade', icon: Heart },
+];
+
+const secondaryNavItems = [
+  { path: '/workout', label: 'Treino', icon: Dumbbell },
+  { path: '/diet', label: 'Dieta', icon: Utensils },
+  { path: '/running', label: 'Corrida', icon: MapPin },
   { path: '/clans', label: 'CLA', icon: Trophy },
-  { path: '/chat', label: 'CHAT', icon: MessageCircle },
-  { path: '/notifications', label: 'NOTIFICACOES', icon: Bell },
-  { path: '/workout', label: 'TREINO', icon: Dumbbell },
-  { path: '/diet', label: 'DIETA', icon: Utensils },
-  { path: '/running', label: 'CORRIDA', icon: MapPin },
-  { path: '/assistant', label: 'PERSONAL AMIGO', icon: Bot },
-  { path: '/profile', label: 'PERFIL', icon: User },
+  { path: '/assistant', label: 'Personal amigo', icon: Bot },
+];
+
+const allNavItems = [
+  ...primaryNavItems,
+  ...secondaryNavItems,
+  { path: '/profile', label: 'Perfil', icon: User },
 ];
 
 const isMissingSocialGlobalStateError = (
@@ -46,6 +55,13 @@ const isMissingSocialGlobalStateError = (
   return combinedText.includes('social_global_state') && (
     combinedText.includes('not found') || combinedText.includes('could not find')
   );
+};
+
+const getUserInitials = (name: string) => {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return 'U';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0]}${words[1][0]}`.toUpperCase();
 };
 
 export function Sidebar() {
@@ -149,11 +165,11 @@ export function Sidebar() {
     };
   }, [profile?.id, refreshUnreadCount]);
 
-  const unreadCountLabel = unreadCount > 99 ? '99+' : String(unreadCount);
-
   useEffect(() => {
     remoteSocialStateAvailableRef.current = true;
   }, [profile?.id]);
+
+  const unreadCountLabel = unreadCount > 99 ? '99+' : String(unreadCount);
 
   const navigateTo = (path: string) => {
     navigate(path);
@@ -168,126 +184,146 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="hidden md:flex flex-col w-64 min-h-screen bg-card border-r border-border p-4">
-        <div className="flex items-center gap-3 mb-8 px-2">
-          <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
-            <Dumbbell className="w-5 h-5 text-primary-foreground" />
-          </div>
-          <span className="text-xl font-bold gradient-text">FitTrack</span>
-        </div>
+      <aside className="social-desktop-sidebar hidden md:flex">
+        <button
+          type="button"
+          onClick={() => navigateTo('/dashboard')}
+          className="social-brand-script"
+          aria-label="Abrir inicio"
+        >
+          FitJourney
+        </button>
 
-        <div className="glass-card p-3 mb-6">
-          <p className="font-medium truncate">{userName}</p>
-          <p className="text-sm text-muted-foreground truncate">{userEmail}</p>
-        </div>
-
-        <nav className="flex-1 space-y-2">
-          {navItems.map((item) => {
-            const isActive = location.pathname === item.path;
+        <nav className="mt-5 flex flex-1 flex-col gap-1">
+          {primaryNavItems.map((item) => {
             const Icon = item.icon;
+            const isActive = location.pathname === item.path;
             const isNotificationsItem = item.path === '/notifications';
             return (
               <button
                 key={item.path}
+                type="button"
+                title={item.label}
                 onClick={() => navigateTo(item.path)}
-                className={`relative w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 ${
-                  isActive
-                    ? 'bg-primary/10 text-primary border border-primary/20'
-                    : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
-                }`}
+                className={cn('social-desktop-nav-item', isActive && 'active')}
               >
-                <Icon className="w-5 h-5" />
-                <span className="font-medium">{item.label}</span>
+                <Icon className="h-6 w-6" />
                 {isNotificationsItem && unreadCount > 0 && (
-                  <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-xs font-semibold text-primary-foreground">
-                    {unreadCountLabel}
-                  </span>
+                  <span className="social-counter-badge">{unreadCountLabel}</span>
                 )}
+              </button>
+            );
+          })}
+
+          <div className="my-2 h-px bg-border/70" />
+
+          {secondaryNavItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = location.pathname === item.path;
+            return (
+              <button
+                key={item.path}
+                type="button"
+                title={item.label}
+                onClick={() => navigateTo(item.path)}
+                className={cn('social-desktop-nav-item', isActive && 'active')}
+              >
+                <Icon className="h-5 w-5" />
               </button>
             );
           })}
         </nav>
 
         <button
-          onClick={handleLogout}
-          className="flex items-center gap-3 px-4 py-3 rounded-xl text-destructive hover:bg-destructive/10 transition-all duration-300"
+          type="button"
+          title={userName}
+          onClick={() => navigateTo('/profile')}
+          className={cn('social-desktop-nav-item mt-2', location.pathname === '/profile' && 'active')}
         >
-          <LogOut className="w-5 h-5" />
-          <span className="font-medium">Sair</span>
+          <span className="text-xs font-semibold">{getUserInitials(userName)}</span>
+        </button>
+
+        <button
+          type="button"
+          title="Sair"
+          onClick={handleLogout}
+          className="social-desktop-nav-item text-destructive"
+        >
+          <LogOut className="h-5 w-5" />
         </button>
       </aside>
 
-      <header className="fixed top-0 left-0 right-0 z-50 md:hidden border-b border-border bg-card/95 backdrop-blur-xl">
-        <div className="flex items-center justify-between px-4 py-3">
+      <header className="social-mobile-header md:hidden">
+        <button
+          type="button"
+          onClick={() => navigateTo('/dashboard')}
+          className="social-brand-script text-[1.95rem]"
+          aria-label="Abrir inicio"
+        >
+          FitJourney
+        </button>
+
+        <button
+          type="button"
+          onClick={() => navigateTo('/search')}
+          className="social-mobile-search"
+          aria-label="Abrir pesquisa"
+        >
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <span>Pesquisar</span>
+        </button>
+
+        <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => navigateTo('/dashboard')}
-            className="flex items-center gap-2"
+            onClick={() => navigateTo('/notifications')}
+            className={cn('social-mobile-icon-button', location.pathname === '/notifications' && 'active')}
+            aria-label="Abrir notificacoes"
           >
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <Dumbbell className="w-4 h-4 text-primary-foreground" />
-            </div>
-            <span className="text-base font-bold gradient-text">FitTrack</span>
+            <Heart className="h-5 w-5" />
+            {unreadCount > 0 && (
+              <span className="social-counter-badge -right-1 -top-1 min-w-4 text-[10px]">
+                {unreadCountLabel}
+              </span>
+            )}
           </button>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => navigateTo('/notifications')}
-              className="relative inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-secondary/70 text-foreground"
-              aria-label="Abrir notificacoes"
-            >
-              <Bell className="w-5 h-5" />
-              {unreadCount > 0 && (
-                <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1 py-0.5 text-[10px] font-semibold text-primary-foreground">
-                  {unreadCountLabel}
-                </span>
-              )}
-            </button>
+          <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+            <SheetTrigger asChild>
+              <button
+                type="button"
+                className="social-mobile-icon-button"
+                aria-label="Abrir menu"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+            </SheetTrigger>
 
-            <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-              <SheetTrigger asChild>
-                <button
-                  type="button"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-secondary/70 text-foreground"
-                  aria-label="Abrir menu"
-                >
-                  <Menu className="w-5 h-5" />
-                </button>
-              </SheetTrigger>
-
-              <SheetContent side="left" className="w-[86vw] max-w-sm border-border bg-card p-4">
-              <div className="flex items-center gap-3 mb-6 mt-5">
-                <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
-                  <Dumbbell className="w-5 h-5 text-primary-foreground" />
-                </div>
-                <span className="text-xl font-bold gradient-text">FitTrack</span>
+            <SheetContent side="right" className="w-[86vw] max-w-sm border-border bg-card p-4">
+              <div className="mb-5 mt-3 rounded-2xl border border-border/80 bg-card/70 p-4">
+                <p className="truncate text-sm font-semibold">{userName}</p>
+                <p className="truncate text-xs text-muted-foreground">{userEmail}</p>
               </div>
 
-              <div className="glass-card p-3 mb-5">
-                <p className="font-medium truncate">{userName}</p>
-                <p className="text-sm text-muted-foreground truncate">{userEmail}</p>
-              </div>
-
-              <nav className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
-                {navItems.map((item) => {
+              <nav className="space-y-1">
+                {allNavItems.map((item) => {
                   const isActive = location.pathname === item.path;
                   const Icon = item.icon;
                   const isNotificationsItem = item.path === '/notifications';
                   return (
                     <button
                       key={item.path}
+                      type="button"
                       onClick={() => navigateTo(item.path)}
-                      className={`relative w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 ${
-                        isActive
-                          ? 'bg-primary/10 text-primary border border-primary/20'
-                          : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
-                      }`}
+                      className={cn(
+                        'relative flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm',
+                        isActive ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:bg-secondary/70 hover:text-foreground'
+                      )}
                     >
-                      <Icon className="w-5 h-5" />
-                      <span className="font-medium">{item.label}</span>
+                      <Icon className="h-4 w-4" />
+                      <span>{item.label}</span>
                       {isNotificationsItem && unreadCount > 0 && (
-                        <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-xs font-semibold text-primary-foreground">
+                        <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[11px] font-semibold text-white">
                           {unreadCountLabel}
                         </span>
                       )}
@@ -297,15 +333,15 @@ export function Sidebar() {
               </nav>
 
               <button
+                type="button"
                 onClick={handleLogout}
-                className="mt-5 w-full flex items-center gap-3 px-4 py-3 rounded-xl text-destructive hover:bg-destructive/10 transition-all duration-300"
+                className="mt-5 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm text-destructive hover:bg-destructive/10"
               >
-                <LogOut className="w-5 h-5" />
-                <span className="font-medium">Sair</span>
+                <LogOut className="h-4 w-4" />
+                <span>Sair</span>
               </button>
-              </SheetContent>
-            </Sheet>
-          </div>
+            </SheetContent>
+          </Sheet>
         </div>
       </header>
     </>

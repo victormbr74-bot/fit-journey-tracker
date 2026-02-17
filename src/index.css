@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Pacifico&family=Sora:wght@300;400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,60 +6,57 @@
 
 @layer base {
   :root {
-    --background: 220 20% 7%;
+    --background: 220 44% 7%;
     --foreground: 0 0% 98%;
 
-    --card: 220 20% 10%;
+    --card: 223 38% 11%;
     --card-foreground: 0 0% 98%;
 
-    --popover: 220 20% 10%;
+    --popover: 223 38% 11%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 82 84% 50%;
-    --primary-foreground: 220 20% 7%;
+    --primary: 338 90% 58%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 20% 15%;
+    --secondary: 220 28% 17%;
     --secondary-foreground: 0 0% 98%;
 
-    --muted: 220 20% 18%;
-    --muted-foreground: 220 10% 60%;
+    --muted: 220 24% 20%;
+    --muted-foreground: 220 12% 68%;
 
-    --accent: 82 84% 50%;
-    --accent-foreground: 220 20% 7%;
+    --accent: 338 90% 58%;
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 220 20% 18%;
-    --input: 220 20% 15%;
-    --ring: 82 84% 50%;
+    --border: 220 24% 21%;
+    --input: 220 26% 16%;
+    --ring: 338 90% 58%;
 
-    --radius: 0.75rem;
+    --radius: 0.95rem;
 
-    /* Custom fitness colors */
-    --energy: 82 84% 50%;
-    --energy-glow: 82 100% 60%;
-    --success: 142 76% 45%;
-    --warning: 38 92% 50%;
-    --info: 199 89% 48%;
+    --energy: 338 90% 58%;
+    --energy-glow: 24 100% 60%;
+    --success: 143 68% 48%;
+    --warning: 36 98% 55%;
+    --info: 199 92% 52%;
     
-    /* Gradients */
-    --gradient-energy: linear-gradient(135deg, hsl(82 84% 50%), hsl(142 76% 45%));
-    --gradient-card: linear-gradient(135deg, hsl(220 20% 12%), hsl(220 20% 8%));
-    --gradient-glow: radial-gradient(circle at center, hsl(82 84% 50% / 0.15), transparent 70%);
+    --gradient-energy: linear-gradient(135deg, hsl(24 100% 58%), hsl(338 90% 58%));
+    --gradient-card: linear-gradient(180deg, hsl(223 38% 12%), hsl(223 40% 8%));
+    --gradient-glow: radial-gradient(circle at center, hsl(338 90% 58% / 0.2), transparent 72%);
     
-    /* Shadows */
-    --shadow-glow: 0 0 40px hsl(82 84% 50% / 0.2);
-    --shadow-card: 0 8px 32px hsl(0 0% 0% / 0.3);
+    --shadow-glow: 0 0 34px hsl(338 90% 58% / 0.28);
+    --shadow-card: 0 14px 34px hsl(220 50% 3% / 0.45);
 
-    --sidebar-background: 220 20% 7%;
+    --sidebar-background: 220 44% 7%;
     --sidebar-foreground: 0 0% 98%;
-    --sidebar-primary: 82 84% 50%;
-    --sidebar-primary-foreground: 220 20% 7%;
-    --sidebar-accent: 220 20% 15%;
+    --sidebar-primary: 338 90% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 28% 17%;
     --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 220 20% 18%;
-    --sidebar-ring: 82 84% 50%;
+    --sidebar-border: 220 24% 21%;
+    --sidebar-ring: 338 90% 58%;
   }
 }
 
@@ -70,13 +67,95 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Sora', sans-serif;
+    background-image:
+      radial-gradient(900px 420px at 70% -15%, hsl(225 52% 18% / 0.4), transparent 60%),
+      radial-gradient(780px 420px at -10% -15%, hsl(338 90% 58% / 0.15), transparent 65%),
+      linear-gradient(180deg, hsl(var(--background)), hsl(220 48% 6%));
+    background-attachment: fixed;
   }
 }
 
 @layer components {
+  .social-app-shell {
+    @apply relative bg-background;
+  }
+
+  .social-brand-script {
+    font-family: 'Pacifico', cursive;
+    line-height: 1;
+    @apply text-foreground;
+  }
+
+  .social-desktop-sidebar {
+    @apply fixed inset-y-0 left-0 z-40 flex w-20 flex-col border-r border-border/80 bg-card/80 px-3 pb-4 pt-6 backdrop-blur-xl;
+  }
+
+  .social-desktop-nav-item {
+    @apply relative inline-flex h-12 w-12 items-center justify-center rounded-2xl text-muted-foreground transition-all duration-200 hover:bg-secondary/85 hover:text-foreground;
+  }
+
+  .social-desktop-nav-item.active {
+    @apply bg-secondary text-foreground;
+    box-shadow: inset 0 0 0 1px hsl(var(--border));
+  }
+
+  .social-counter-badge {
+    @apply absolute inline-flex items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-[11px] font-semibold text-white;
+  }
+
+  .social-mobile-header {
+    @apply fixed inset-x-0 top-0 z-50 flex items-center gap-2 border-b border-border/80 bg-card/90 px-3 py-2 backdrop-blur-xl;
+  }
+
+  .social-mobile-search {
+    @apply flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full bg-secondary/90 px-3 text-sm text-muted-foreground transition-colors hover:bg-secondary;
+  }
+
+  .social-mobile-icon-button {
+    @apply relative inline-flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors hover:bg-secondary;
+  }
+
+  .social-mobile-icon-button.active {
+    @apply bg-secondary;
+  }
+
+  .social-mobile-tabbar {
+    @apply fixed inset-x-0 bottom-0 z-50 border-t border-border/80 bg-card/95 px-2 pb-[calc(0.6rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl;
+  }
+
+  .social-mobile-tabbar-item {
+    @apply relative inline-flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors hover:bg-secondary;
+  }
+
+  .social-mobile-tabbar-item.active {
+    @apply bg-secondary;
+  }
+
+  .social-feed-column {
+    @apply mx-auto w-full max-w-[640px];
+  }
+
+  .social-stories-row {
+    @apply flex gap-3 overflow-x-auto pb-1;
+    scrollbar-width: none;
+  }
+
+  .social-stories-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .social-story-ring {
+    @apply rounded-full p-[2px];
+    background: linear-gradient(45deg, #f9ce34 10%, #ee2a7b 55%, #6228d7 100%);
+  }
+
+  .social-feed-post {
+    @apply overflow-hidden rounded-2xl border border-border/80 bg-card/85 shadow-xl shadow-black/25;
+  }
+
   .glass-card {
-    @apply bg-card/80 backdrop-blur-xl border border-border/50 rounded-xl;
+    @apply bg-card/80 backdrop-blur-xl border border-border/60 rounded-2xl;
     box-shadow: var(--shadow-card);
   }
 

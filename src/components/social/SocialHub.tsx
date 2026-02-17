@@ -71,6 +71,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 
 interface SocialHubProps {
   profile: UserProfile;
@@ -566,6 +567,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const initializedOutgoingRequestStatusRef = useRef(false);
   const applyingRemoteSnapshotRef = useRef(false);
   const lastGlobalSnapshotHashRef = useRef('');
+  const notifiedRemoteSyncUnavailableRef = useRef(false);
 
   const triggerSystemNotification = useCallback((title: string, description: string) => {
     if ('Notification' in window && Notification.permission === 'granted') {
@@ -605,7 +607,19 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     applyingRemoteSnapshotRef.current = false;
     lastGlobalSnapshotHashRef.current = '';
     setRemoteGlobalSyncEnabled(true);
+    notifiedRemoteSyncUnavailableRef.current = false;
   }, [profile.id]);
+
+  useEffect(() => {
+    if (remoteGlobalSyncEnabled) {
+      notifiedRemoteSyncUnavailableRef.current = false;
+      return;
+    }
+
+    if (notifiedRemoteSyncUnavailableRef.current) return;
+    notifiedRemoteSyncUnavailableRef.current = true;
+    toast.error('Sincronizacao social indisponivel. Atualize as migrations do Supabase para usar pedidos de amizade.');
+  }, [remoteGlobalSyncEnabled]);
 
   useEffect(() => {
     setFriendRequestsLoaded(false);
@@ -1614,6 +1628,17 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   const handleAddFriend = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (remoteGlobalSyncEnabled && !remoteSnapshotLoaded) {
+      toast.error('Aguarde a sincronizacao inicial da comunidade e tente novamente.');
+      return;
+    }
+
+    if (!remoteGlobalSyncEnabled) {
+      toast.error('Nao foi possivel sincronizar pedidos. Atualize as migrations do Supabase.');
+      return;
+    }
+
     const receiverHandleValue = sanitizeHandleInput(friendHandle);
     if (!receiverHandleValue) {
       toast.error('Informe o @usuario para seguir.');
@@ -1630,8 +1655,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
 
     const targetProfile = await resolveDiscoverableProfileByHandle(receiverHandleValue);
-    const receiverProfileId = targetProfile?.profileId;
-    if (receiverProfileId && receiverProfileId === profile.id) {
+    if (!targetProfile?.profileId) {
+      toast.error('Perfil nao encontrado. Use o @usuario exato para enviar o pedido.');
+      return;
+    }
+
+    const receiverProfileId = targetProfile.profileId;
+    if (receiverProfileId === profile.id) {
       toast.error('Nao e possivel seguir voce mesmo.');
       return;
     }
@@ -2473,16 +2503,20 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }));
   };
 
+  const isFeedSection = activeSection === 'feed';
+
   return (
-    <div className="pb-24 md:pb-8 space-y-6">
-      <div>
-        <p className="text-sm text-muted-foreground">
-          Seguindo, notificacoes, CLAs com metas e desafios coletivos em um unico lugar.
-        </p>
-        <h1 className="mt-1 text-2xl md:text-3xl font-bold">
-          Comunidade <span className="gradient-text">FitTrack</span>
-        </h1>
-      </div>
+    <div className={cn('pb-24 md:pb-8', isFeedSection ? 'space-y-4' : 'space-y-6')}>
+      {!isFeedSection && (
+        <div>
+          <p className="text-sm text-muted-foreground">
+            Seguindo, notificacoes, CLAs com metas e desafios coletivos em um unico lugar.
+          </p>
+          <h1 className="mt-1 text-2xl md:text-3xl font-bold">
+            Comunidade <span className="gradient-text">FitTrack</span>
+          </h1>
+        </div>
+      )}
 
       <input
         ref={composerGalleryInputRef}
@@ -2503,7 +2537,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       <Tabs
         value={activeSection}
         onValueChange={(value) => setActiveSection(value as SocialSection)}
-        className="space-y-4"
+        className={cn('space-y-4', isFeedSection && 'space-y-3')}
       >
         {showSectionTabs && (
           <TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-6">
@@ -3020,191 +3054,205 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           </Card>
         </TabsContent>
 
-        <TabsContent value="feed" className="space-y-4">
-          <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/50 px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold">Home feed</p>
-              <p className="text-xs text-muted-foreground">
-                Stories e posts, com criacao pelo botao +.
-              </p>
-            </div>
+        <TabsContent value="feed" className="social-feed-column space-y-4 md:space-y-5">
+          <div className="flex items-center justify-between px-1">
+            <p className="hidden text-sm text-muted-foreground md:block">Home</p>
             <Button
               type="button"
               size="icon"
-              className="h-11 w-11 rounded-full"
+              className="h-10 w-10 rounded-full"
               onClick={() => openComposer('post')}
             >
               <Plus className="h-5 w-5" />
-              <span className="sr-only">Adicionar story ou post</span>
+              <span className="sr-only">Criar post</span>
             </Button>
           </div>
 
-          <Card className="glass-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <div>
-                <CardTitle className="text-lg">Stories</CardTitle>
-                <CardDescription>Stories expiram em 24 horas, estilo Instagram.</CardDescription>
-              </div>
-              <Button type="button" size="sm" variant="outline" onClick={() => openComposer('story')}>
-                <Plus className="h-4 w-4" />
-                Nova
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex gap-3 overflow-x-auto pb-2">
-                <button
-                  type="button"
-                  onClick={() => openComposer('story')}
-                  className="flex w-20 shrink-0 flex-col items-center gap-1 text-center"
-                >
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-primary/70 bg-primary/10">
-                    <Plus className="h-5 w-5 text-primary" />
-                  </div>
-                  <span className="line-clamp-1 text-xs">Sua story</span>
-                </button>
-
-                {activeStories.map((story) => (
-                  <button
-                    key={story.id}
-                    type="button"
-                    onClick={() => setActiveStoryId(story.id)}
-                    className="flex w-20 shrink-0 flex-col items-center gap-1 text-center"
-                  >
-                    <div className="rounded-full bg-gradient-to-tr from-warning via-primary to-success p-[2px]">
-                      <img
-                        src={story.imageDataUrl}
-                        alt={`Story de ${story.authorName}`}
-                        className="h-16 w-16 rounded-full border-2 border-background object-cover"
-                      />
-                    </div>
-                    <span className="line-clamp-1 text-xs">{story.authorName.split(' ')[0]}</span>
-                    <span className="text-[10px] text-muted-foreground">{story.likes} curtidas</span>
-                  </button>
-                ))}
-              </div>
-              {!activeStories.length && (
-                <p className="text-sm text-muted-foreground">Sem stories nas ultimas 24h.</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="glass-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <div>
-                <CardTitle className="text-lg">Feed da comunidade</CardTitle>
-                <CardDescription>Painel social no estilo Instagram, com visual proprio.</CardDescription>
-              </div>
-              <Button type="button" size="sm" variant="outline" onClick={() => openComposer('post')}>
-                <Plus className="h-4 w-4" />
-                Novo post
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {!globalPosts.length && <p className="text-sm text-muted-foreground">Ainda nao ha posts.</p>}
-              {globalPosts.map((post) => (
-                <div key={post.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-semibold">{post.authorName}</p>
-                      <p className="text-xs text-muted-foreground">{post.authorHandle} - {formatDateTime(post.createdAt)}</p>
-                    </div>
-                    <Badge variant="outline">{post.sharedCount} compartilhamentos</Badge>
-                  </div>
-                  <img src={post.imageDataUrl} alt={`Post de ${post.authorName}`} className="w-full max-h-[420px] object-cover rounded-lg border border-border/70" />
-                  <p className="text-sm">{post.caption}</p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={
-                        post.likedByHandles.some(
-                          (handle) => normalizeHandle(handle) === normalizedProfileHandle
-                        )
-                          ? 'default'
-                          : 'outline'
-                      }
-                      onClick={() => handleLikePost(post.id)}
-                    >
-                      <Heart className="h-4 w-4" />
-                      Curtir ({post.likes})
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="energy"
-                      onClick={() => openShareDialog(post)}
-                    >
-                      <Share2 className="h-4 w-4" />
-                      Compartilhar
-                    </Button>
-                  </div>
-                  <div className="space-y-2 rounded-md border border-border/60 bg-background/40 p-2">
-                    <p className="text-xs text-muted-foreground">
-                      {post.comments.length} comentario(s)
-                    </p>
-                    {!post.comments.length && (
-                      <p className="text-xs text-muted-foreground">Seja o primeiro a comentar.</p>
-                    )}
-                    {post.comments.map((comment) => {
-                      const likedCommentByMe = comment.likedByHandles.some(
-                        (handle) => normalizeHandle(handle) === normalizedProfileHandle
-                      );
-                      return (
-                        <div key={comment.id} className="rounded-md border border-border/60 bg-card/50 p-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <p className="text-xs font-semibold">
-                                {comment.authorName} <span className="text-muted-foreground">{comment.authorHandle}</span>
-                              </p>
-                              <p className="text-sm">{comment.text}</p>
-                              <p className="text-[11px] text-muted-foreground">{formatDateTime(comment.createdAt)}</p>
-                            </div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant={likedCommentByMe ? 'default' : 'outline'}
-                              onClick={() => handleLikeComment(post.id, comment.id)}
-                            >
-                              <Heart className="h-3.5 w-3.5" />
-                              {comment.likes}
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <form
-                      className="flex items-center gap-2"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        handleAddPostComment(post.id);
-                      }}
-                    >
-                      <Input
-                        value={postCommentInputs[post.id] || ''}
-                        onChange={(event) =>
-                          setPostCommentInputs((previous) => ({
-                            ...previous,
-                            [post.id]: event.target.value,
-                          }))
-                        }
-                        placeholder="Escreva um comentario..."
-                        className="h-9"
-                      />
-                      <Button
-                        type="submit"
-                        size="sm"
-                        variant="outline"
-                        disabled={!(postCommentInputs[post.id] || '').trim()}
-                      >
-                        <Send className="h-3.5 w-3.5" />
-                        Comentar
-                      </Button>
-                    </form>
-                  </div>
+          <div className="rounded-2xl border border-border/80 bg-card/65 px-3 py-3">
+            <div className="social-stories-row">
+              <button
+                type="button"
+                onClick={() => openComposer('story')}
+                className="flex w-[74px] shrink-0 flex-col items-center gap-1 text-center"
+              >
+                <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-primary/80 bg-primary/10">
+                  <Plus className="h-5 w-5 text-primary" />
                 </div>
+                <span className="line-clamp-1 text-[11px]">Seu story</span>
+              </button>
+
+              {activeStories.map((story) => (
+                <button
+                  key={story.id}
+                  type="button"
+                  onClick={() => setActiveStoryId(story.id)}
+                  className="flex w-[74px] shrink-0 flex-col items-center gap-1 text-center"
+                >
+                  <div className="social-story-ring">
+                    <img
+                      src={story.imageDataUrl}
+                      alt={`Story de ${story.authorName}`}
+                      className="h-16 w-16 rounded-full border-2 border-background object-cover"
+                    />
+                  </div>
+                  <span className="line-clamp-1 text-[11px]">
+                    {story.authorName.split(' ')[0]}
+                  </span>
+                </button>
               ))}
-            </CardContent>
-          </Card>
+            </div>
+            {!activeStories.length && (
+              <p className="mt-2 text-xs text-muted-foreground">Sem stories nas ultimas 24h.</p>
+            )}
+          </div>
+
+          {!globalPosts.length && (
+            <div className="rounded-2xl border border-border/80 bg-card/65 p-4">
+              <p className="text-sm text-muted-foreground">Ainda nao ha posts no feed.</p>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {globalPosts.map((post) => {
+              const likedByMe = post.likedByHandles.some(
+                (handle) => normalizeHandle(handle) === normalizedProfileHandle
+              );
+
+              return (
+                <article key={post.id} className="social-feed-post">
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="social-story-ring">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-card text-xs font-semibold">
+                          {getInitials(post.authorName)}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold">{post.authorName}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {post.authorHandle} - {formatDateTime(post.createdAt)}
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="hidden md:inline-flex">
+                      {post.sharedCount} compartilhamentos
+                    </Badge>
+                  </div>
+
+                  <img
+                    src={post.imageDataUrl}
+                    alt={`Post de ${post.authorName}`}
+                    className="aspect-square w-full object-cover"
+                  />
+
+                  <div className="space-y-3 px-4 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={likedByMe ? 'default' : 'ghost'}
+                          className="h-8 rounded-full px-3"
+                          onClick={() => handleLikePost(post.id)}
+                        >
+                          <Heart className="h-4 w-4" />
+                          {post.likes}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 rounded-full px-3"
+                          onClick={() => openShareDialog(post)}
+                        >
+                          <Send className="h-4 w-4" />
+                          Compartilhar
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {post.comments.length} comentario(s)
+                      </p>
+                    </div>
+
+                    {!!post.caption && (
+                      <p className="text-sm">
+                        <span className="mr-1 font-semibold">{post.authorName}</span>
+                        {post.caption}
+                      </p>
+                    )}
+
+                    <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-2.5">
+                      {!post.comments.length && (
+                        <p className="text-xs text-muted-foreground">
+                          Seja o primeiro a comentar.
+                        </p>
+                      )}
+                      {post.comments.map((comment) => {
+                        const likedCommentByMe = comment.likedByHandles.some(
+                          (handle) => normalizeHandle(handle) === normalizedProfileHandle
+                        );
+                        return (
+                          <div key={comment.id} className="rounded-lg border border-border/60 bg-card/45 p-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-xs font-semibold">
+                                  {comment.authorName}{' '}
+                                  <span className="text-muted-foreground">{comment.authorHandle}</span>
+                                </p>
+                                <p className="text-sm">{comment.text}</p>
+                                <p className="text-[11px] text-muted-foreground">
+                                  {formatDateTime(comment.createdAt)}
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={likedCommentByMe ? 'default' : 'ghost'}
+                                className="h-7 min-w-7 rounded-full px-2"
+                                onClick={() => handleLikeComment(post.id, comment.id)}
+                              >
+                                <Heart className="h-3.5 w-3.5" />
+                                {comment.likes}
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      <form
+                        className="flex items-center gap-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          handleAddPostComment(post.id);
+                        }}
+                      >
+                        <Input
+                          value={postCommentInputs[post.id] || ''}
+                          onChange={(event) =>
+                            setPostCommentInputs((previous) => ({
+                              ...previous,
+                              [post.id]: event.target.value,
+                            }))
+                          }
+                          placeholder="Adicione um comentario..."
+                          className="h-9 rounded-full bg-secondary/65"
+                        />
+                        <Button
+                          type="submit"
+                          size="sm"
+                          variant="outline"
+                          className="h-9 rounded-full px-3"
+                          disabled={!(postCommentInputs[post.id] || '').trim()}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                        </Button>
+                      </form>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-4">
@@ -3567,4 +3615,5 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     </div>
   );
 }
+
 

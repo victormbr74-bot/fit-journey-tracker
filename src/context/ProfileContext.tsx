@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { isValidHandle, normalizeHandle, toHandle } from '@/lib/handleUtils';
+import { isValidHandle, toHandle } from '@/lib/handleUtils';
 import {
   UserProfile,
   WeightEntry,
@@ -62,13 +62,18 @@ const isMissingRpcFunctionError = (error: { code?: string; message?: string; det
   return combinedText.includes('could not find the function');
 };
 
-const buildHandleCandidate = (seedHandle: string, suffix: number) => {
-  const base = normalizeHandle(seedHandle) || 'fit.user';
-  if (!suffix) return toHandle(base);
-  const suffixText = String(suffix);
-  const maxBaseLen = Math.max(3, 30 - suffixText.length);
-  return toHandle(`${base.slice(0, maxBaseLen)}${suffixText}`);
+const isMissingProfilesColumnError = (
+  error: { code?: string; message?: string; details?: string } | null | undefined,
+  columnName: string
+) => {
+  if (!error) return false;
+  if (error.code !== 'PGRST204') return false;
+  const normalizedColumn = `'${columnName.toLowerCase()}'`;
+  const combinedText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
+  return combinedText.includes(normalizedColumn) && combinedText.includes("'profiles'");
 };
+
+const BACKEND_CAPABILITIES_STORAGE_KEY = 'fit-journey.backend-capabilities';
 
 export function ProfileProvider({ children }: ProfileProviderProps) {
   const { user, loading: authLoading } = useAuth();
@@ -79,11 +84,62 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   const [userChallenges, setUserChallenges] = useState<UserChallengeProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const fetchedRef = useRef(false);
+  const backendCapabilitiesRef = useRef({
+    handleColumnAvailable: true,
+    phoneColumnAvailable: true,
+    handleRpcAvailable: true,
+  });
+
+  const persistCapabilities = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem(
+        BACKEND_CAPABILITIES_STORAGE_KEY,
+        JSON.stringify(backendCapabilitiesRef.current)
+      );
+    } catch {
+      // Ignore storage write issues.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = window.sessionStorage.getItem(BACKEND_CAPABILITIES_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as Partial<typeof backendCapabilitiesRef.current>;
+      backendCapabilitiesRef.current = {
+        ...backendCapabilitiesRef.current,
+        ...parsed,
+      };
+    } catch {
+      // Ignore storage read issues.
+    }
+  }, []);
+
+  const disableHandleFeatures = useCallback(() => {
+    backendCapabilitiesRef.current.handleColumnAvailable = false;
+    backendCapabilitiesRef.current.handleRpcAvailable = false;
+    persistCapabilities();
+  }, [persistCapabilities]);
+
+  const disablePhoneFeature = useCallback(() => {
+    backendCapabilitiesRef.current.phoneColumnAvailable = false;
+    persistCapabilities();
+  }, [persistCapabilities]);
 
   const reserveUniqueHandle = useCallback(
     async (seed: string, excludeCurrentProfile = false) => {
       const normalizedSeed = toHandle(seed || user?.name || user?.email || 'fit.user');
+      const fallbackHandle = toHandle(normalizedSeed);
+      if (!backendCapabilitiesRef.current.handleColumnAvailable) {
+        return { handle: fallbackHandle, error: null };
+      }
+
       const excludeProfileId = excludeCurrentProfile ? user?.id || null : null;
+      if (!backendCapabilitiesRef.current.handleRpcAvailable) {
+        return { handle: fallbackHandle, error: null };
+      }
 
       const { data, error } = await supabase.rpc('reserve_unique_profile_handle', {
         seed_input: normalizedSeed,
@@ -91,42 +147,18 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       });
 
       if (error) {
-        if (!isMissingRpcFunctionError(error)) {
-          console.error('Error reserving unique handle:', error);
-          return { error: new Error(error.message) };
-        }
-
-        // Fallback if RPC is unavailable in this environment.
-        const fallbackHandle = toHandle(normalizedSeed);
-        const { data: rows, error: queryError } = await supabase
-          .from('profiles')
-          .select('id, handle')
-          .limit(500);
-
-        if (queryError || !Array.isArray(rows)) {
+        if (isMissingRpcFunctionError(error) || isMissingProfilesColumnError(error, 'handle')) {
+          disableHandleFeatures();
           return { handle: fallbackHandle, error: null };
         }
 
-        const takenHandles = new Set<string>(
-          rows
-            .filter((row) => !excludeProfileId || row.id !== excludeProfileId)
-            .map((row) => normalizeHandle(row.handle))
-            .filter(Boolean)
-        );
-
-        for (let suffix = 0; suffix < 500; suffix += 1) {
-          const candidate = buildHandleCandidate(fallbackHandle, suffix);
-          if (!takenHandles.has(normalizeHandle(candidate))) {
-            return { handle: candidate, error: null };
-          }
-        }
-
-        return { handle: fallbackHandle, error: null };
+        console.error('Error reserving unique handle:', error);
+        return { error: new Error(error.message) };
       }
 
       return { handle: toHandle(data || normalizedSeed), error: null };
     },
-    [user?.email, user?.id, user?.name]
+    [disableHandleFeatures, user?.email, user?.id, user?.name]
   );
 
   const checkHandleAvailability = useCallback(
@@ -135,43 +167,36 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       if (!isValidHandle(normalizedHandle)) {
         return { available: false, normalizedHandle, error: null };
       }
+      if (!backendCapabilitiesRef.current.handleColumnAvailable) {
+        return { available: true, normalizedHandle, error: null };
+      }
 
       const excludeProfileId = excludeCurrentProfile ? user?.id || null : null;
+      if (!backendCapabilitiesRef.current.handleRpcAvailable) {
+        return { available: true, normalizedHandle, error: null };
+      }
+
       const { data, error } = await supabase.rpc('is_profile_handle_available', {
         handle_input: normalizedHandle,
         exclude_profile_id: excludeProfileId,
       });
 
       if (error) {
+        if (isMissingRpcFunctionError(error) || isMissingProfilesColumnError(error, 'handle')) {
+          disableHandleFeatures();
+          // Do not block onboarding/profile updates if backend schema is legacy.
+          return { available: true, normalizedHandle, error: null };
+        }
+
         if (!isMissingRpcFunctionError(error)) {
           console.error('Error checking handle availability:', error);
           return { available: false, normalizedHandle, error: new Error(error.message) };
         }
-
-        // Fallback if RPC is unavailable in this environment.
-        const { data: rows, error: queryError } = await supabase
-          .from('profiles')
-          .select('id, handle')
-          .limit(500);
-
-        if (queryError || !Array.isArray(rows)) {
-          // Do not block onboarding/profile updates if backend function is missing.
-          return { available: true, normalizedHandle, error: null };
-        }
-
-        const normalizedTarget = normalizeHandle(normalizedHandle);
-        const handleTaken = rows.some((row) => {
-          if (!row?.handle) return false;
-          if (excludeProfileId && row.id === excludeProfileId) return false;
-          return normalizeHandle(row.handle) === normalizedTarget;
-        });
-
-        return { available: !handleTaken, normalizedHandle, error: null };
       }
 
       return { available: Boolean(data), normalizedHandle, error: null };
     },
-    [user?.id]
+    [disableHandleFeatures, user?.id]
   );
 
   const fetchProfile = useCallback(async (): Promise<UserProfile | null> => {
@@ -409,29 +434,49 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         return { error: reserveHandleError || new Error('Failed to reserve profile handle') };
       }
 
-      const payload = {
-        id: user.id,
-        name: profileData.name || user.name,
-        handle: reservedHandle,
-        email: profileData.email || user.email,
-        phone: profileData.phone || user.phone || null,
-        birthdate: profileData.birthdate || null,
-        age: profileData.age || null,
-        weight: profileData.weight || null,
-        height: profileData.height || null,
-        goal: profileData.goal || 'maintain',
-        muscle_groups: profileData.muscle_groups || [],
-        training_frequency: profileData.training_frequency || 3,
-        points: profileData.points || 0,
-        spotify_playlist: profileData.spotify_playlist || null,
-        youtube_playlist: profileData.youtube_playlist || null,
+      const buildPayload = () => {
+        const payload: Record<string, unknown> = {
+          id: user.id,
+          name: profileData.name || user.name,
+          email: profileData.email || user.email,
+          birthdate: profileData.birthdate || null,
+          age: profileData.age || null,
+          weight: profileData.weight || null,
+          height: profileData.height || null,
+          goal: profileData.goal || 'maintain',
+          muscle_groups: profileData.muscle_groups || [],
+          training_frequency: profileData.training_frequency || 3,
+          points: profileData.points || 0,
+          spotify_playlist: profileData.spotify_playlist || null,
+          youtube_playlist: profileData.youtube_playlist || null,
+        };
+
+        if (backendCapabilitiesRef.current.handleColumnAvailable) {
+          payload.handle = reservedHandle;
+        }
+        if (backendCapabilitiesRef.current.phoneColumnAvailable) {
+          payload.phone = profileData.phone || user.phone || null;
+        }
+
+        return payload;
       };
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .insert(payload)
-        .select()
-        .single();
+      const insertWithPayload = (payload: Record<string, unknown>) =>
+        supabase.from('profiles').insert(payload).select().single();
+
+      let payload = buildPayload();
+      let { data, error } = await insertWithPayload(payload);
+
+      if (error && (isMissingProfilesColumnError(error, 'handle') || isMissingProfilesColumnError(error, 'phone'))) {
+        if (isMissingProfilesColumnError(error, 'handle')) {
+          disableHandleFeatures();
+        }
+        if (isMissingProfilesColumnError(error, 'phone')) {
+          disablePhoneFeature();
+        }
+        payload = buildPayload();
+        ({ data, error } = await insertWithPayload(payload));
+      }
 
       if (error) {
         console.error('Error creating profile:', error);
@@ -471,7 +516,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
       return { data: mappedProfile, error: null };
     },
-    [user, fetchWeightHistory, reserveUniqueHandle]
+    [disableHandleFeatures, disablePhoneFeature, fetchWeightHistory, reserveUniqueHandle, user]
   );
 
   const updateProfile = useCallback(
@@ -479,7 +524,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       if (!user) return { error: new Error('Not authenticated') };
 
       let nextHandle = updates.handle;
-      if (typeof updates.handle === 'string') {
+      const canUseHandle = backendCapabilitiesRef.current.handleColumnAvailable;
+
+      if (typeof updates.handle === 'string' && canUseHandle) {
         const normalizedHandle = toHandle(updates.handle || profile?.handle || updates.name || 'fit.user');
         if (!isValidHandle(normalizedHandle)) {
           return { error: new Error('Formato de @usuario invalido') };
@@ -498,16 +545,48 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         nextHandle = normalizedHandle;
       }
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .update({
+      const buildPayload = () => {
+        const payload: Record<string, unknown> = {
           ...updates,
-          ...(typeof nextHandle === 'string' ? { handle: nextHandle } : {}),
           updated_at: new Date().toISOString(),
-        })
-        .eq('id', user.id)
-        .select()
-        .single();
+        };
+
+        if (!backendCapabilitiesRef.current.handleColumnAvailable) {
+          delete payload.handle;
+        } else if (typeof nextHandle === 'string') {
+          payload.handle = nextHandle;
+        }
+
+        if (!backendCapabilitiesRef.current.phoneColumnAvailable) {
+          delete payload.phone;
+        }
+
+        return payload;
+      };
+
+      const updateWithPayload = (payload: Record<string, unknown>) =>
+        supabase
+          .from('profiles')
+          .update(payload)
+          .eq('id', user.id)
+          .select()
+          .single();
+
+      let payload = buildPayload();
+      let { data, error } = await updateWithPayload(payload);
+
+      if (error && (isMissingProfilesColumnError(error, 'handle') || isMissingProfilesColumnError(error, 'phone'))) {
+        if (isMissingProfilesColumnError(error, 'handle')) {
+          disableHandleFeatures();
+          nextHandle = undefined;
+        }
+        if (isMissingProfilesColumnError(error, 'phone')) {
+          disablePhoneFeature();
+        }
+
+        payload = buildPayload();
+        ({ data, error } = await updateWithPayload(payload));
+      }
 
       if (error) {
         console.error('Error updating profile:', error);
@@ -537,7 +616,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       setProfile(mappedProfile);
       return { data: mappedProfile, error: null };
     },
-    [user, profile?.handle, checkHandleAvailability]
+    [checkHandleAvailability, disableHandleFeatures, disablePhoneFeature, profile?.handle, user]
   );
 
   const addWeightEntry = useCallback(

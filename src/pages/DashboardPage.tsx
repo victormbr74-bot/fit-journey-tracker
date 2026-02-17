@@ -34,8 +34,8 @@ const DashboardPage = () => {
       <SocialHub profile={profile} defaultSection="feed" showSectionTabs={false} />
       <Button
         type="button"
-        variant="energy"
-        className="fixed bottom-6 right-4 z-[70] h-12 rounded-full px-5 shadow-xl md:bottom-8 md:right-8"
+        variant="glass"
+        className="fixed bottom-20 right-4 z-[70] h-12 rounded-full border-border/70 bg-card/90 px-5 text-foreground shadow-xl md:bottom-8 md:right-8"
         onClick={() => navigate('/assistant')}
       >
         <img
