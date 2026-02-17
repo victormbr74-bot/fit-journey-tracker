@@ -7,7 +7,9 @@ import {
   Camera,
   Clock,
   Dumbbell,
+  Globe,
   Images,
+  Lock,
   MessageSquareText,
   Play,
   Ruler,
@@ -37,7 +39,7 @@ import {
   SOCIAL_PROFILE_STORAGE_PREFIX,
 } from '@/lib/storageKeys';
 import { normalizeHandle, toHandle } from '@/lib/handleUtils';
-import { SocialFeedPost, SocialState, SocialStory } from '@/types/social';
+import { SocialContentVisibility, SocialFeedPost, SocialState, SocialStory } from '@/types/social';
 import { supabase } from '@/integrations/supabase/client';
 import { disableSocialGlobalState, isSocialGlobalStateAvailable } from '@/lib/socialSyncCapability';
 
@@ -45,6 +47,7 @@ interface ProfileSocialInfo {
   phrase: string;
   message: string;
   profilePhotoDataUrl: string;
+  accountVisibility: SocialContentVisibility;
 }
 
 interface ProfilePhotoDraft {
@@ -58,6 +61,7 @@ const EMPTY_PROFILE_SOCIAL: ProfileSocialInfo = {
   phrase: '',
   message: '',
   profilePhotoDataUrl: '',
+  accountVisibility: 'public',
 };
 
 const MAX_IMAGE_SIZE = 1080;
@@ -68,6 +72,8 @@ const GLOBAL_FEED_POST_LIMIT = 500;
 const GLOBAL_STORY_LIMIT = 500;
 const STORY_DURATION_HOURS = 24;
 const SOCIAL_GLOBAL_STATE_ID = true;
+const resolveContentVisibility = (value: unknown): SocialContentVisibility =>
+  value === 'private' ? 'private' : 'public';
 
 const isMissingSocialGlobalStateError = (
   error: { code?: string; message?: string; details?: string } | null | undefined
@@ -91,12 +97,22 @@ const isStoryActive = (story: SocialStory) => new Date(story.expiresAt).getTime(
 const sanitizeStories = (stories: SocialStory[]) =>
   stories
     .filter((story) => story?.id && story.imageDataUrl && isStoryActive(story))
+    .map((story) => ({
+      ...story,
+      authorProfileId: typeof story.authorProfileId === 'string' ? story.authorProfileId : undefined,
+      visibility: resolveContentVisibility(story.visibility),
+    }))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, GLOBAL_STORY_LIMIT);
 
 const sanitizePosts = (posts: SocialFeedPost[]) =>
   posts
     .filter((post) => post?.id && post.imageDataUrl && post.authorHandle)
+    .map((post) => ({
+      ...post,
+      authorProfileId: typeof post.authorProfileId === 'string' ? post.authorProfileId : undefined,
+      visibility: resolveContentVisibility(post.visibility),
+    }))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, GLOBAL_FEED_POST_LIMIT);
 
@@ -128,6 +144,9 @@ const parseProfileSocial = (value: string | null): ProfileSocialInfo => {
       phrase: (parsed.phrase?.toString() || (parsed as { bio?: string }).bio || '').toString(),
       message: parsed.message?.toString() || '',
       profilePhotoDataUrl: parsed.profilePhotoDataUrl?.toString() || '',
+      accountVisibility: resolveContentVisibility(
+        parsed.accountVisibility || (parsed as { visibility?: unknown }).visibility
+      ),
     };
   } catch {
     return EMPTY_PROFILE_SOCIAL;
@@ -233,6 +252,7 @@ export function ProfilePage() {
   const [phrase, setPhrase] = useState('');
   const [message, setMessage] = useState('');
   const [profilePhotoDataUrl, setProfilePhotoDataUrl] = useState('');
+  const [accountVisibility, setAccountVisibility] = useState<SocialContentVisibility>('public');
   const [photoCaption, setPhotoCaption] = useState('');
   const [storyCaption, setStoryCaption] = useState('');
   const [activeStoryId, setActiveStoryId] = useState('');
@@ -274,6 +294,7 @@ export function ProfilePage() {
     setPhrase(socialInfo.phrase);
     setMessage(socialInfo.message);
     setProfilePhotoDataUrl(socialInfo.profilePhotoDataUrl);
+    setAccountVisibility(socialInfo.accountVisibility);
     setSocialMediaLoaded(true);
   }, [profile, socialHubStorageKey, socialProfileStorageKey]);
 
@@ -295,6 +316,7 @@ export function ProfilePage() {
         setPhrase(socialInfo.phrase);
         setMessage(socialInfo.message);
         setProfilePhotoDataUrl(socialInfo.profilePhotoDataUrl);
+        setAccountVisibility(socialInfo.accountVisibility);
       }
     };
 
@@ -387,11 +409,53 @@ export function ProfilePage() {
       phrase: (overrides?.phrase ?? phrase).trim(),
       message: (overrides?.message ?? message).trim(),
       profilePhotoDataUrl: overrides?.profilePhotoDataUrl ?? profilePhotoDataUrl,
+      accountVisibility: resolveContentVisibility(overrides?.accountVisibility ?? accountVisibility),
     };
     window.localStorage.setItem(socialProfileStorageKey, JSON.stringify(payload));
     if (showToast) {
       toast.success('Perfil social atualizado.');
     }
+  };
+
+  const handleAccountVisibilityChange = (nextVisibility: SocialContentVisibility) => {
+    if (nextVisibility === accountVisibility) return;
+
+    setAccountVisibility(nextVisibility);
+    saveSocialProfile({ accountVisibility: nextVisibility }, false);
+
+    const nextPosts = sanitizePosts(
+      globalPosts.map((post) => {
+        const isMyPost = normalizeHandle(post.authorHandle || post.authorName) === normalizedProfileHandle;
+        if (!isMyPost) return post;
+        return {
+          ...post,
+          authorProfileId: profile.id,
+          visibility: nextVisibility,
+        };
+      })
+    );
+
+    const nextStories = sanitizeStories(
+      globalStories.map((story) => {
+        const isMyStory = normalizeHandle(story.authorHandle || story.authorName) === normalizedProfileHandle;
+        if (!isMyStory) return story;
+        return {
+          ...story,
+          authorProfileId: profile.id,
+          visibility: nextVisibility,
+        };
+      })
+    );
+
+    setGlobalPosts(nextPosts);
+    setGlobalStories(nextStories);
+    void syncGlobalSnapshotToSupabase(nextPosts, nextStories);
+
+    toast.success(
+      nextVisibility === 'private'
+        ? 'Conta privada ativada. Seus posts e stories agora aparecem apenas para quem segue voce.'
+        : 'Conta publica ativada. Seus posts e stories agora aparecem para todos.'
+    );
   };
 
   const syncGlobalSnapshotToSupabase = async (
@@ -513,11 +577,13 @@ export function ProfilePage() {
       if (mode === 'post') {
         const nextPost: SocialFeedPost = {
           id: createId(),
+          authorProfileId: profile.id,
           authorName: profile.name,
           authorHandle: profileHandle,
           caption: photoCaption.trim() || 'Novo registro no perfil.',
           imageDataUrl,
           createdAt: now.toISOString(),
+          visibility: accountVisibility,
           likes: 0,
           likedByHandles: [],
           sharedCount: 0,
@@ -534,12 +600,14 @@ export function ProfilePage() {
       const expiresAt = new Date(now.getTime() + STORY_DURATION_HOURS * 60 * 60 * 1000);
       const nextStory: SocialStory = {
         id: createId(),
+        authorProfileId: profile.id,
         authorName: profile.name,
         authorHandle: profileHandle,
         caption: storyCaption.trim(),
         imageDataUrl,
         createdAt: now.toISOString(),
         expiresAt: expiresAt.toISOString(),
+        visibility: accountVisibility,
         likes: 0,
         likedByHandles: [],
         sharedCount: 0,
@@ -676,6 +744,39 @@ export function ProfilePage() {
                 <p className="font-medium">
                   {goalInfo?.icon} {goalInfo?.label}
                 </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border/70 bg-background/60 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">Privacidade da conta</p>
+                <p className="text-xs text-muted-foreground">
+                  Privado: apenas quem segue voce ve seus posts e stories no feed.
+                </p>
+              </div>
+              <div className="flex items-center gap-1 rounded-full border border-border/70 bg-card/60 p-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={accountVisibility === 'public' ? 'default' : 'ghost'}
+                  className="rounded-full"
+                  onClick={() => handleAccountVisibilityChange('public')}
+                >
+                  <Globe className="h-4 w-4" />
+                  Publico
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={accountVisibility === 'private' ? 'default' : 'ghost'}
+                  className="rounded-full"
+                  onClick={() => handleAccountVisibilityChange('private')}
+                >
+                  <Lock className="h-4 w-4" />
+                  Privado
+                </Button>
               </div>
             </div>
           </div>

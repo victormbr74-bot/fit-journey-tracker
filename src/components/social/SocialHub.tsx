@@ -62,6 +62,7 @@ import {
   SocialClanChallenge,
   SocialClanGoal,
   SocialChatMessage,
+  SocialContentVisibility,
   SocialFeedPost,
   SocialFriend,
   SocialFriendRequest,
@@ -262,6 +263,20 @@ const CHAT_QUICK_EMOJIS = [
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const sanitizeHandleInput = (value: string) => sanitizeHandleBody(value);
 const normalizePhoneDigits = (value: string) => value.replace(/\D+/g, '');
+const resolveSocialContentVisibility = (value: unknown): SocialContentVisibility =>
+  value === 'private' ? 'private' : 'public';
+const parseProfileAccountVisibility = (value: string | null): SocialContentVisibility => {
+  if (!value) return 'public';
+  try {
+    const parsed = JSON.parse(value) as {
+      accountVisibility?: unknown;
+      visibility?: unknown;
+    };
+    return resolveSocialContentVisibility(parsed.accountVisibility ?? parsed.visibility);
+  } catch {
+    return 'public';
+  }
+};
 const SOCIAL_SECTION_PATH: Record<SocialSection, string> = {
   search: '/search',
   friends: '/friends',
@@ -653,11 +668,16 @@ const sanitizePosts = (posts: unknown): SocialFeedPost[] => {
 
       return {
         id: rawPost.id,
+        authorProfileId:
+          typeof rawPost.authorProfileId === 'string' && rawPost.authorProfileId.trim()
+            ? rawPost.authorProfileId.trim()
+            : undefined,
         authorName: rawPost.authorName?.trim() || `Perfil ${index + 1}`,
         authorHandle: toHandle(rawPost.authorHandle || rawPost.authorName || `post.${index}`),
         caption: rawPost.caption?.trim() || '',
         imageDataUrl: rawPost.imageDataUrl,
         createdAt,
+        visibility: resolveSocialContentVisibility(rawPost.visibility),
         likes,
         likedByHandles,
         sharedCount,
@@ -691,12 +711,17 @@ const sanitizeStories = (stories: unknown): SocialStory[] => {
 
       return {
         id: rawStory.id,
+        authorProfileId:
+          typeof rawStory.authorProfileId === 'string' && rawStory.authorProfileId.trim()
+            ? rawStory.authorProfileId.trim()
+            : undefined,
         authorName: rawStory.authorName?.trim() || `Perfil ${index + 1}`,
         authorHandle: toHandle(rawStory.authorHandle || rawStory.authorName || `story.${index}`),
         caption: rawStory.caption?.trim() || '',
         imageDataUrl: rawStory.imageDataUrl,
         createdAt,
         expiresAt,
+        visibility: resolveSocialContentVisibility(rawStory.visibility),
         likes,
         likedByHandles,
         sharedCount,
@@ -1314,6 +1339,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const navigate = useNavigate();
   const location = useLocation();
   const storageKey = useMemo(() => `${SOCIAL_HUB_STORAGE_PREFIX}${profile.id}`, [profile.id]);
+  const socialProfileStorageKey = useMemo(
+    () => `${SOCIAL_PROFILE_STORAGE_PREFIX}${profile.id}`,
+    [profile.id]
+  );
   const seenChatEventsStorageKey = useMemo(
     () => `${SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX}${profile.id}`,
     [profile.id]
@@ -3009,25 +3038,53 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   const activeStories = useMemo(() => sanitizeStories(globalStories), [globalStories]);
 
+  const canViewContent = useCallback(
+    (content: {
+      authorProfileId?: string;
+      authorHandle?: string;
+      visibility?: SocialContentVisibility;
+    }) => {
+      const visibility = resolveSocialContentVisibility(content.visibility);
+      if (visibility !== 'private') return true;
+      if (content.authorProfileId === profile.id) return true;
+
+      const normalizedAuthorHandle = normalizeHandle(content.authorHandle || '');
+      if (!normalizedAuthorHandle) return false;
+      if (normalizedAuthorHandle === normalizedProfileHandle) return true;
+      return friendsByHandle.has(normalizedAuthorHandle);
+    },
+    [friendsByHandle, normalizedProfileHandle, profile.id]
+  );
+
+  const visibleFeedPosts = useMemo(
+    () => globalPosts.filter((post) => canViewContent(post)),
+    [canViewContent, globalPosts]
+  );
+
+  const visibleStories = useMemo(
+    () => activeStories.filter((story) => canViewContent(story)),
+    [activeStories, canViewContent]
+  );
+
   const postsById = useMemo(
-    () => new Map(globalPosts.map((post) => [post.id, post])),
-    [globalPosts]
+    () => new Map(visibleFeedPosts.map((post) => [post.id, post])),
+    [visibleFeedPosts]
   );
 
   const storiesById = useMemo(
-    () => new Map(activeStories.map((story) => [story.id, story])),
-    [activeStories]
+    () => new Map(visibleStories.map((story) => [story.id, story])),
+    [visibleStories]
   );
 
   const activeFriendFeedPosts = useMemo(() => {
     if (!activeFriendProfileHandle) return [];
-    return globalPosts
+    return visibleFeedPosts
       .filter(
         (post) =>
           normalizeHandle(post.authorHandle || post.authorName) === activeFriendProfileHandle
       )
       .slice(0, 18);
-  }, [activeFriendProfileHandle, globalPosts]);
+  }, [activeFriendProfileHandle, visibleFeedPosts]);
 
   const displayedFriendProfileSummary = useMemo(
     () =>
@@ -3069,7 +3126,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const friendAvatarUrlsByHandle = useMemo(() => {
     const avatarCandidates = new Map<string, { imageDataUrl: string; createdAt: number }>();
 
-    activeStories.forEach((story) => {
+    visibleStories.forEach((story) => {
       const normalizedHandle = normalizeHandle(story.authorHandle || story.authorName);
       if (!normalizedHandle || !story.imageDataUrl) return;
       const createdAt = new Date(story.createdAt).getTime();
@@ -3081,7 +3138,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       }
     });
 
-    globalPosts.forEach((post) => {
+    visibleFeedPosts.forEach((post) => {
       const normalizedHandle = normalizeHandle(post.authorHandle || post.authorName);
       if (!normalizedHandle || !post.imageDataUrl) return;
       const createdAt = new Date(post.createdAt).getTime();
@@ -3096,7 +3153,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     return new Map(
       Array.from(avatarCandidates.entries()).map(([handle, value]) => [handle, value.imageDataUrl] as const)
     );
-  }, [activeStories, globalPosts]);
+  }, [visibleFeedPosts, visibleStories]);
 
   const friendProfilePhotoUrlsByProfileId = useMemo(() => {
     const entries = new Map<string, string>();
@@ -3144,13 +3201,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   };
 
   const sharePost = useMemo(
-    () => globalPosts.find((post) => post.id === sharePostId) ?? null,
-    [globalPosts, sharePostId]
+    () => visibleFeedPosts.find((post) => post.id === sharePostId) ?? null,
+    [sharePostId, visibleFeedPosts]
   );
 
   const shareStory = useMemo(
-    () => activeStories.find((story) => story.id === shareStoryId) ?? null,
-    [activeStories, shareStoryId]
+    () => visibleStories.find((story) => story.id === shareStoryId) ?? null,
+    [shareStoryId, visibleStories]
   );
 
   const chatSharedPreviewPost = useMemo(
@@ -3165,13 +3222,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const chatSharedPreviewItem = chatSharedPreviewPost ?? chatSharedPreviewStory;
 
   const editingPost = useMemo(
-    () => globalPosts.find((post) => post.id === editingPostId) ?? null,
-    [editingPostId, globalPosts]
+    () => visibleFeedPosts.find((post) => post.id === editingPostId) ?? null,
+    [editingPostId, visibleFeedPosts]
   );
 
   const editingStory = useMemo(
-    () => activeStories.find((story) => story.id === editingStoryId) ?? null,
-    [activeStories, editingStoryId]
+    () => visibleStories.find((story) => story.id === editingStoryId) ?? null,
+    [editingStoryId, visibleStories]
   );
 
   const editingContentTarget = editingPost || editingStory;
@@ -3234,11 +3291,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   const filteredFeedPosts = useMemo(() => {
     const query = feedSearch.trim().toLowerCase();
-    if (!query) return globalPosts;
+    if (!query) return visibleFeedPosts;
 
     const normalizedHandleQuery = sanitizeHandleInput(query);
 
-    return globalPosts.filter((post) => {
+    return visibleFeedPosts.filter((post) => {
       const authorName = (post.authorName || '').toLowerCase();
       const authorHandle = toHandle(post.authorHandle || post.authorName || 'fit.user').toLowerCase();
       const caption = (post.caption || '').toLowerCase();
@@ -3251,11 +3308,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         (!!normalizedHandleQuery && normalizedAuthorHandle.includes(normalizedHandleQuery))
       );
     });
-  }, [feedSearch, globalPosts]);
+  }, [feedSearch, visibleFeedPosts]);
 
   const storyGroups = useMemo(() => {
     const groups = new Map<string, StoryGroup>();
-    activeStories.forEach((story) => {
+    visibleStories.forEach((story) => {
       const authorHandle = normalizeHandle(story.authorHandle || story.authorName || story.id);
       if (!authorHandle) return;
 
@@ -3289,7 +3346,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         ),
       }))
       .sort((a, b) => new Date(b.latestCreatedAt).getTime() - new Date(a.latestCreatedAt).getTime());
-  }, [activeStories]);
+  }, [visibleStories]);
 
   useEffect(() => {
     if (!activeStoryGroupHandle) return;
@@ -3544,7 +3601,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   useEffect(() => {
     if (!isShareDialogOpen) return;
     if (sharePostId) {
-      if (globalPosts.some((post) => post.id === sharePostId)) return;
+      if (visibleFeedPosts.some((post) => post.id === sharePostId)) return;
       setIsShareDialogOpen(false);
       setSharePostId('');
       setShareStoryId('');
@@ -3563,7 +3620,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       setShareMessage('');
       setSelectedShareFriendIds([]);
     }
-  }, [globalPosts, isShareDialogOpen, sharePostId, shareStoryId, storiesById]);
+  }, [isShareDialogOpen, sharePostId, shareStoryId, storiesById, visibleFeedPosts]);
 
   useEffect(() => {
     const container = chatMessagesContainerRef.current;
@@ -4588,13 +4645,18 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
 
     if (composerMode === 'post') {
+      const accountVisibility = typeof window === 'undefined'
+        ? 'public'
+        : parseProfileAccountVisibility(window.localStorage.getItem(socialProfileStorageKey));
       const nextPost: SocialFeedPost = {
         id: createId(),
+        authorProfileId: profile.id,
         authorName: profile.name,
         authorHandle: profileHandle,
         caption: composerCaption.trim(),
         imageDataUrl: composerImageDataUrl,
         createdAt: new Date().toISOString(),
+        visibility: accountVisibility,
         likes: 0,
         likedByHandles: [],
         sharedCount: 0,
@@ -4614,15 +4676,20 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     const createdAt = new Date();
     const expiresAt = new Date(createdAt.getTime() + STORY_DURATION_HOURS * 60 * 60 * 1000);
+    const accountVisibility = typeof window === 'undefined'
+      ? 'public'
+      : parseProfileAccountVisibility(window.localStorage.getItem(socialProfileStorageKey));
 
     const nextStory: SocialStory = {
       id: createId(),
+      authorProfileId: profile.id,
       authorName: profile.name,
       authorHandle: profileHandle,
       caption: composerCaption.trim(),
       imageDataUrl: composerImageDataUrl,
       createdAt: createdAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
+      visibility: accountVisibility,
       likes: 0,
       likedByHandles: [],
       sharedCount: 0,
@@ -7085,13 +7152,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             )}
           </div>
 
-          {!globalPosts.length && (
+          {!visibleFeedPosts.length && (
             <div className="rounded-2xl border border-border/80 bg-card/65 p-4">
               <p className="text-sm text-muted-foreground">Ainda nao ha posts no feed.</p>
             </div>
           )}
 
-          {!!globalPosts.length && !filteredFeedPosts.length && (
+          {!!visibleFeedPosts.length && !filteredFeedPosts.length && (
             <div className="rounded-2xl border border-border/80 bg-card/65 p-4">
               <p className="text-sm text-muted-foreground">
                 Nenhum post encontrado para essa busca.

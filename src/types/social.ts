@@ -1,5 +1,6 @@
 export type SocialNotificationType = 'friend' | 'clan' | 'goal' | 'challenge' | 'post' | 'chat' | 'system';
 export type SocialSection = 'search' | 'friends' | 'clans' | 'chat' | 'feed' | 'notifications';
+export type SocialContentVisibility = 'public' | 'private';
 
 export interface SocialFriend {
   id: string;
@@ -85,11 +86,13 @@ export interface SocialClan {
 
 export interface SocialFeedPost {
   id: string;
+  authorProfileId?: string;
   authorName: string;
   authorHandle: string;
   caption: string;
   imageDataUrl: string;
   createdAt: string;
+  visibility?: SocialContentVisibility;
   likes: number;
   likedByHandles: string[];
   sharedCount: number;
@@ -98,12 +101,14 @@ export interface SocialFeedPost {
 
 export interface SocialStory {
   id: string;
+  authorProfileId?: string;
   authorName: string;
   authorHandle: string;
   caption: string;
   imageDataUrl: string;
   createdAt: string;
   expiresAt: string;
+  visibility?: SocialContentVisibility;
   likes: number;
   likedByHandles: string[];
   sharedCount: number;
