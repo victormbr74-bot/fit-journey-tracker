@@ -3,7 +3,23 @@ import { useProfile } from '@/hooks/useProfile';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Check, Trophy, Calendar, Target, AlertTriangle, Loader2 } from 'lucide-react';
+import {
+  Check,
+  Trophy,
+  Calendar,
+  Target,
+  AlertTriangle,
+  Loader2,
+  Dumbbell,
+  Droplets,
+  Footprints,
+  Scale,
+  UtensilsCrossed,
+  Medal,
+  BarChart3,
+  Flame,
+  LucideIcon,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const toIsoDate = (date: Date) => {
@@ -25,6 +41,75 @@ const getWeekStartIsoDate = (referenceDate: Date) => {
 const getChallengeCycleKey = () => {
   const now = new Date();
   return `${toIsoDate(now)}|${getWeekStartIsoDate(now)}`;
+};
+
+const isEmojiLike = (value: string) =>
+  Array.from(value).some((char) => char.charCodeAt(0) > 127);
+
+const isImagePath = (value: string) =>
+  /^(https?:\/\/|data:image\/|\/)/i.test(value);
+
+const resolveChallengeIconComponent = (
+  icon: string,
+  category: string
+): LucideIcon => {
+  const normalizedIcon = icon.toLowerCase();
+  const normalizedCategory = category.toLowerCase();
+
+  if (normalizedIcon.includes('water') || normalizedIcon.includes('drop') || normalizedIcon.includes('hidrat')) {
+    return Droplets;
+  }
+  if (normalizedIcon.includes('run') || normalizedIcon.includes('corrida')) {
+    return Footprints;
+  }
+  if (normalizedIcon.includes('scale') || normalizedIcon.includes('peso')) {
+    return Scale;
+  }
+  if (normalizedIcon.includes('food') || normalizedIcon.includes('diet') || normalizedIcon.includes('dieta')) {
+    return UtensilsCrossed;
+  }
+  if (normalizedIcon.includes('medal')) {
+    return Medal;
+  }
+  if (normalizedIcon.includes('chart') || normalizedIcon.includes('graf')) {
+    return BarChart3;
+  }
+  if (normalizedIcon.includes('target') || normalizedIcon.includes('meta')) {
+    return Target;
+  }
+  if (normalizedIcon.includes('trophy')) {
+    return Trophy;
+  }
+
+  if (normalizedCategory.includes('workout')) return Dumbbell;
+  if (normalizedCategory.includes('cardio')) return Footprints;
+  if (normalizedCategory.includes('health')) return Droplets;
+  if (normalizedCategory.includes('diet')) return UtensilsCrossed;
+  if (normalizedCategory.includes('tracking')) return BarChart3;
+
+  return Flame;
+};
+
+const renderChallengeIcon = (icon: string | undefined, category: string | undefined) => {
+  const safeIcon = (icon || '').trim();
+  const safeCategory = (category || '').trim();
+
+  if (safeIcon && isImagePath(safeIcon)) {
+    return (
+      <img
+        src={safeIcon}
+        alt="Icone do desafio"
+        className="h-6 w-6 rounded object-cover"
+      />
+    );
+  }
+
+  if (safeIcon && isEmojiLike(safeIcon)) {
+    return <span className="text-2xl leading-none">{safeIcon}</span>;
+  }
+
+  const IconComponent = resolveChallengeIconComponent(safeIcon, safeCategory);
+  return <IconComponent className="h-6 w-6 text-primary" />;
 };
 
 export function ChallengesSection() {
@@ -141,11 +226,11 @@ export function ChallengesSection() {
         <div className="flex items-start gap-3">
           <div
             className={cn(
-              'w-12 h-12 rounded-xl flex items-center justify-center text-2xl',
+              'h-12 w-12 rounded-xl flex items-center justify-center',
               progress.is_completed ? 'bg-primary/20' : 'bg-secondary'
             )}
           >
-            {progress.challenge.icon}
+            {renderChallengeIcon(progress.challenge.icon, progress.challenge.category)}
           </div>
 
           <div className="flex-1 min-w-0">
