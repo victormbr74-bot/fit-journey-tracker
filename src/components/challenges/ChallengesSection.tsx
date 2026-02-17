@@ -28,11 +28,11 @@ const getChallengeCycleKey = () => {
 };
 
 export function ChallengesSection() {
-  const { challenges, userChallenges, assignDailyChallenges, completeChallenge, profile } = useProfile();
+  const { userChallenges, assignDailyChallenges, completeChallenge, profile } = useProfile();
   const [lastAssignmentCycle, setLastAssignmentCycle] = useState('');
 
   useEffect(() => {
-    if (challenges.length === 0) return;
+    if (!profile?.id) return;
 
     let cancelled = false;
 
@@ -60,7 +60,11 @@ export function ChallengesSection() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [assignDailyChallenges, challenges.length, lastAssignmentCycle]);
+  }, [assignDailyChallenges, lastAssignmentCycle, profile?.id]);
+
+  useEffect(() => {
+    setLastAssignmentCycle('');
+  }, [profile?.id]);
 
   const dailyChallenges = userChallenges.filter(
     (challengeProgress) => challengeProgress.challenge?.challenge_type === 'daily'

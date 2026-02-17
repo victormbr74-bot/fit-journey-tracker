@@ -23,9 +23,10 @@ import { MusicPlayer } from '@/components/workout/MusicPlayer';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { EditProfileModal } from './EditProfileModal';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { AppearanceSettings } from '@/components/theme/AppearanceSettings';
 import { toast } from 'sonner';
@@ -46,6 +47,13 @@ interface ProfileSocialInfo {
   profilePhotoDataUrl: string;
 }
 
+interface ProfilePhotoDraft {
+  imageDataUrl: string;
+  positionX: number;
+  positionY: number;
+  zoom: number;
+}
+
 const EMPTY_PROFILE_SOCIAL: ProfileSocialInfo = {
   phrase: '',
   message: '',
@@ -53,6 +61,9 @@ const EMPTY_PROFILE_SOCIAL: ProfileSocialInfo = {
 };
 
 const MAX_IMAGE_SIZE = 1080;
+const PROFILE_PHOTO_OUTPUT_SIZE = 720;
+const PROFILE_PHOTO_ZOOM_MIN = 1;
+const PROFILE_PHOTO_ZOOM_MAX = 3;
 const GLOBAL_FEED_POST_LIMIT = 500;
 const GLOBAL_STORY_LIMIT = 500;
 const STORY_DURATION_HOURS = 24;
@@ -165,6 +176,52 @@ const convertImageToDataUrl = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
+const cropProfilePhotoDataUrl = (
+  imageDataUrl: string,
+  positionX: number,
+  positionY: number,
+  zoom: number
+): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const safeZoom = Math.min(PROFILE_PHOTO_ZOOM_MAX, Math.max(PROFILE_PHOTO_ZOOM_MIN, zoom || 1));
+      const clampedPositionX = Math.min(100, Math.max(0, positionX));
+      const clampedPositionY = Math.min(100, Math.max(0, positionY));
+
+      const minDimension = Math.max(1, Math.min(image.width, image.height));
+      const cropSize = Math.max(1, minDimension / safeZoom);
+      const maxOffsetX = Math.max(0, image.width - cropSize);
+      const maxOffsetY = Math.max(0, image.height - cropSize);
+      const sourceX = (clampedPositionX / 100) * maxOffsetX;
+      const sourceY = (clampedPositionY / 100) * maxOffsetY;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = PROFILE_PHOTO_OUTPUT_SIZE;
+      canvas.height = PROFILE_PHOTO_OUTPUT_SIZE;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        resolve(imageDataUrl);
+        return;
+      }
+
+      context.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        cropSize,
+        cropSize,
+        0,
+        0,
+        PROFILE_PHOTO_OUTPUT_SIZE,
+        PROFILE_PHOTO_OUTPUT_SIZE
+      );
+      resolve(canvas.toDataURL('image/jpeg', 0.88));
+    };
+    image.onerror = () => reject(new Error('Erro ao aplicar recorte da foto.'));
+    image.src = imageDataUrl;
+  });
+
 export function ProfilePage() {
   const { profile, runSessions, loading } = useProfile();
   const { signOut } = useAuth();
@@ -180,6 +237,9 @@ export function ProfilePage() {
   const [storyCaption, setStoryCaption] = useState('');
   const [activeStoryId, setActiveStoryId] = useState('');
   const [publishingMode, setPublishingMode] = useState<'post' | 'story' | null>(null);
+  const [profilePhotoDraft, setProfilePhotoDraft] = useState<ProfilePhotoDraft | null>(null);
+  const [isProfilePhotoEditorOpen, setIsProfilePhotoEditorOpen] = useState(false);
+  const [isSavingProfilePhoto, setIsSavingProfilePhoto] = useState(false);
   const [socialMediaLoaded, setSocialMediaLoaded] = useState(false);
 
   const profilePhotoInputRef = useRef<HTMLInputElement | null>(null);
@@ -385,6 +445,36 @@ export function ProfilePage() {
     }
   };
 
+  const closeProfilePhotoEditor = () => {
+    if (isSavingProfilePhoto) return;
+    setIsProfilePhotoEditorOpen(false);
+    setProfilePhotoDraft(null);
+  };
+
+  const handleSaveProfilePhotoDraft = async () => {
+    if (!profilePhotoDraft || isSavingProfilePhoto) return;
+
+    setIsSavingProfilePhoto(true);
+    try {
+      const croppedImageDataUrl = await cropProfilePhotoDataUrl(
+        profilePhotoDraft.imageDataUrl,
+        profilePhotoDraft.positionX,
+        profilePhotoDraft.positionY,
+        profilePhotoDraft.zoom
+      );
+      setProfilePhotoDataUrl(croppedImageDataUrl);
+      saveSocialProfile({ profilePhotoDataUrl: croppedImageDataUrl }, false);
+      setIsProfilePhotoEditorOpen(false);
+      setProfilePhotoDraft(null);
+      toast.success('Foto de perfil atualizada.');
+    } catch (error) {
+      console.error('Erro ao atualizar foto de perfil:', error);
+      toast.error('Nao foi possivel atualizar a foto de perfil.');
+    } finally {
+      setIsSavingProfilePhoto(false);
+    }
+  };
+
   const handleProfilePhotoSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -396,9 +486,13 @@ export function ProfilePage() {
 
     try {
       const imageDataUrl = await convertImageToDataUrl(file);
-      setProfilePhotoDataUrl(imageDataUrl);
-      saveSocialProfile({ profilePhotoDataUrl: imageDataUrl }, false);
-      toast.success('Foto de perfil atualizada.');
+      setProfilePhotoDraft({
+        imageDataUrl,
+        positionX: 50,
+        positionY: 50,
+        zoom: 1,
+      });
+      setIsProfilePhotoEditorOpen(true);
     } catch (error) {
       console.error('Erro ao atualizar foto de perfil:', error);
       toast.error('Nao foi possivel atualizar a foto de perfil.');
@@ -795,6 +889,117 @@ export function ProfilePage() {
           Sair da conta
         </Button>
       </div>
+
+      <Dialog open={isProfilePhotoEditorOpen} onOpenChange={(open) => !open && closeProfilePhotoEditor()}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Ajustar foto de perfil</DialogTitle>
+            <DialogDescription>
+              Ajuste enquadramento e zoom antes de salvar.
+            </DialogDescription>
+          </DialogHeader>
+
+          {profilePhotoDraft && (
+            <div className="space-y-5">
+              <div className="mx-auto h-56 w-56 overflow-hidden rounded-full border border-border/70 bg-black/20">
+                <img
+                  src={profilePhotoDraft.imageDataUrl}
+                  alt="Pre-visualizacao da foto de perfil"
+                  className="h-full w-full object-cover transition-transform duration-150"
+                  style={{
+                    objectPosition: `${profilePhotoDraft.positionX}% ${profilePhotoDraft.positionY}%`,
+                    transform: `scale(${profilePhotoDraft.zoom})`,
+                  }}
+                />
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Horizontal</span>
+                    <span>{Math.round(profilePhotoDraft.positionX)}%</span>
+                  </div>
+                  <Slider
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={[profilePhotoDraft.positionX]}
+                    onValueChange={(value) =>
+                      setProfilePhotoDraft((previous) =>
+                        previous
+                          ? { ...previous, positionX: value[0] ?? previous.positionX }
+                          : previous
+                      )
+                    }
+                    disabled={isSavingProfilePhoto}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Vertical</span>
+                    <span>{Math.round(profilePhotoDraft.positionY)}%</span>
+                  </div>
+                  <Slider
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={[profilePhotoDraft.positionY]}
+                    onValueChange={(value) =>
+                      setProfilePhotoDraft((previous) =>
+                        previous
+                          ? { ...previous, positionY: value[0] ?? previous.positionY }
+                          : previous
+                      )
+                    }
+                    disabled={isSavingProfilePhoto}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Zoom</span>
+                    <span>{profilePhotoDraft.zoom.toFixed(2)}x</span>
+                  </div>
+                  <Slider
+                    min={PROFILE_PHOTO_ZOOM_MIN}
+                    max={PROFILE_PHOTO_ZOOM_MAX}
+                    step={0.01}
+                    value={[profilePhotoDraft.zoom]}
+                    onValueChange={(value) =>
+                      setProfilePhotoDraft((previous) =>
+                        previous
+                          ? { ...previous, zoom: value[0] ?? previous.zoom }
+                          : previous
+                      )
+                    }
+                    disabled={isSavingProfilePhoto}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={closeProfilePhotoEditor}
+                  disabled={isSavingProfilePhoto}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  variant="energy"
+                  onClick={handleSaveProfilePhotoDraft}
+                  disabled={isSavingProfilePhoto}
+                >
+                  {isSavingProfilePhoto ? 'Salvando...' : 'Salvar foto'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(activeStory)} onOpenChange={(open) => !open && setActiveStoryId('')}>
         <DialogContent className="max-w-sm overflow-hidden p-0">

@@ -1252,6 +1252,41 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     loadData();
   }, [user, authLoading, fetchProfile, fetchWeightHistory, fetchRunSessions, fetchChallenges, assignDailyChallenges]);
 
+  useEffect(() => {
+    if (authLoading || !user) return;
+    if (typeof window === 'undefined') return;
+
+    let cancelled = false;
+    const syncRecurringChallenges = async () => {
+      if (cancelled) return;
+      try {
+        await assignDailyChallenges();
+      } catch (error) {
+        console.error('Error syncing recurring challenges in background:', error);
+      }
+    };
+
+    void syncRecurringChallenges();
+
+    const intervalId = window.setInterval(() => {
+      void syncRecurringChallenges();
+    }, 60 * 1000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void syncRecurringChallenges();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [authLoading, user, assignDailyChallenges]);
+
   // Reset fetchedRef when user changes
   useEffect(() => {
     return () => {

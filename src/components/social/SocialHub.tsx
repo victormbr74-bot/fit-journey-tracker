@@ -122,6 +122,22 @@ interface RemotePhoneProfileSearchResult {
   phone: string | null;
 }
 
+interface RemotePublicProfileSummaryResult {
+  profile_id: string;
+  name: string | null;
+  handle: string;
+  goal: string | null;
+  points: number | null;
+}
+
+interface FriendProfileSummary {
+  profileId?: string;
+  name: string;
+  handle: string;
+  goal: string;
+  points: number | null;
+}
+
 interface ContactPickerResult {
   name?: string[];
   tel?: string[];
@@ -728,6 +744,14 @@ const mapRemotePhoneProfilesToDiscoverable = (
     })
     .filter((item): item is DiscoverableProfile & { phone: string } => Boolean(item));
 
+const createFriendProfileSummaryFallback = (friend: SocialFriend): FriendProfileSummary => ({
+  profileId: friend.profileId,
+  name: friend.name?.trim() || 'Perfil',
+  handle: toHandle(friend.handle || friend.name || 'fit.user'),
+  goal: friend.goal?.trim() || 'Sem meta definida',
+  points: null,
+});
+
 const sanitizeChatMessages = (messages: unknown): SocialChatMessage[] => {
   if (!Array.isArray(messages)) return [];
 
@@ -1249,6 +1273,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [keepChatHistory, setKeepChatHistory] = useState(true);
   const [chatHistoryPreferenceLoaded, setChatHistoryPreferenceLoaded] = useState(false);
   const [communityFriendsTab, setCommunityFriendsTab] = useState('search');
+  const [isFriendProfileDialogOpen, setIsFriendProfileDialogOpen] = useState(false);
+  const [activeFriendProfileId, setActiveFriendProfileId] = useState('');
+  const [friendProfileSummary, setFriendProfileSummary] = useState<FriendProfileSummary | null>(null);
+  const [isFriendProfileSummaryLoading, setIsFriendProfileSummaryLoading] = useState(false);
 
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [sharePostId, setSharePostId] = useState('');
@@ -2329,6 +2357,62 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     return mapRemotePhoneProfilesToDiscoverable(mappedRows, normalizedProfileHandle);
   }, [normalizedProfileHandle, profile.id]);
 
+  const fetchFriendPublicProfileSummary = useCallback(async (
+    friend: SocialFriend
+  ): Promise<FriendProfileSummary> => {
+    const fallbackSummary = createFriendProfileSummaryFallback(friend);
+    const normalizedHandle = normalizeHandle(friend.handle || friend.name || '');
+    const targetHandle = normalizedHandle ? toHandle(normalizedHandle) : null;
+
+    const { data, error } = await supabase.rpc('get_profile_public_summary', {
+      target_profile_id: friend.profileId || null,
+      target_handle: targetHandle,
+    });
+
+    if (!error && Array.isArray(data) && data.length) {
+      const summaryRow = data[0] as RemotePublicProfileSummaryResult;
+      const parsedPoints = Number(summaryRow.points);
+      return {
+        profileId: summaryRow.profile_id || fallbackSummary.profileId,
+        name: summaryRow.name?.trim() || fallbackSummary.name,
+        handle: toHandle(summaryRow.handle || fallbackSummary.handle),
+        goal: resolveGoalLabel(summaryRow.goal || fallbackSummary.goal),
+        points: Number.isFinite(parsedPoints) ? Math.max(0, Math.round(parsedPoints)) : null,
+      };
+    }
+
+    if (error && !isMissingRpcFunctionError(error)) {
+      console.error('Erro ao buscar resumo publico do perfil:', error);
+    }
+
+    if (!targetHandle) return fallbackSummary;
+
+    const { data: handleRows, error: handleError } = await supabase.rpc('search_profiles_by_handle', {
+      query_text: targetHandle,
+      limit_count: 10,
+      exclude_profile_id: profile.id,
+    });
+
+    if (handleError && !isMissingRpcFunctionError(handleError)) {
+      console.error('Erro ao buscar resumo publico do perfil por handle:', handleError);
+      return fallbackSummary;
+    }
+
+    const matchedHandleRow = Array.isArray(handleRows)
+      ? handleRows.find((row) => normalizeHandle(row.handle) === normalizedHandle) || handleRows[0]
+      : null;
+
+    if (!matchedHandleRow) return fallbackSummary;
+
+    return {
+      profileId: matchedHandleRow.profile_id || fallbackSummary.profileId,
+      name: matchedHandleRow.name?.trim() || fallbackSummary.name,
+      handle: toHandle(matchedHandleRow.handle || fallbackSummary.handle),
+      goal: resolveGoalLabel(matchedHandleRow.goal || fallbackSummary.goal),
+      points: fallbackSummary.points,
+    };
+  }, [profile.id]);
+
   const handleImportDeviceContacts = async () => {
     if (!contactPickerSupported) {
       toast.error('Leitura de contatos nao suportada neste dispositivo/navegador.');
@@ -2634,6 +2718,22 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     [socialState.friends]
   );
 
+  const activeFriendProfile = useMemo(
+    () => socialState.friends.find((friend) => friend.id === activeFriendProfileId) || null,
+    [activeFriendProfileId, socialState.friends]
+  );
+
+  const activeFriendProfileHandle = useMemo(
+    () =>
+      normalizeHandle(
+        friendProfileSummary?.handle ||
+        activeFriendProfile?.handle ||
+        activeFriendProfile?.name ||
+        ''
+      ),
+    [activeFriendProfile?.handle, activeFriendProfile?.name, friendProfileSummary?.handle]
+  );
+
   const friendsByHandle = useMemo(
     () =>
       new Map(
@@ -2680,6 +2780,53 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     () => new Map(activeStories.map((story) => [story.id, story])),
     [activeStories]
   );
+
+  const activeFriendFeedPosts = useMemo(() => {
+    if (!activeFriendProfileHandle) return [];
+    return globalPosts
+      .filter(
+        (post) =>
+          normalizeHandle(post.authorHandle || post.authorName) === activeFriendProfileHandle
+      )
+      .slice(0, 18);
+  }, [activeFriendProfileHandle, globalPosts]);
+
+  const displayedFriendProfileSummary = useMemo(
+    () =>
+      activeFriendProfile
+        ? friendProfileSummary || createFriendProfileSummaryFallback(activeFriendProfile)
+        : null,
+    [activeFriendProfile, friendProfileSummary]
+  );
+
+  useEffect(() => {
+    if (!activeFriendProfileId) return;
+    if (socialState.friends.some((friend) => friend.id === activeFriendProfileId)) return;
+    setIsFriendProfileDialogOpen(false);
+    setActiveFriendProfileId('');
+    setFriendProfileSummary(null);
+    setIsFriendProfileSummaryLoading(false);
+  }, [activeFriendProfileId, socialState.friends]);
+
+  useEffect(() => {
+    if (!isFriendProfileDialogOpen || !activeFriendProfile) return;
+
+    let cancelled = false;
+    setFriendProfileSummary(createFriendProfileSummaryFallback(activeFriendProfile));
+    setIsFriendProfileSummaryLoading(true);
+
+    const loadFriendProfileSummary = async () => {
+      const summary = await fetchFriendPublicProfileSummary(activeFriendProfile);
+      if (cancelled) return;
+      setFriendProfileSummary(summary);
+      setIsFriendProfileSummaryLoading(false);
+    };
+
+    void loadFriendProfileSummary();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFriendProfile, fetchFriendPublicProfileSummary, isFriendProfileDialogOpen]);
 
   const friendAvatarUrlsByHandle = useMemo(() => {
     const avatarCandidates = new Map<string, { imageDataUrl: string; createdAt: number }>();
@@ -3141,6 +3288,19 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
   };
 
+  const closeFriendProfileDialog = () => {
+    setIsFriendProfileDialogOpen(false);
+    setActiveFriendProfileId('');
+    setFriendProfileSummary(null);
+    setIsFriendProfileSummaryLoading(false);
+  };
+
+  const handleOpenFriendProfileDialog = (friend: SocialFriend) => {
+    setActiveFriendProfileId(friend.id);
+    setFriendProfileSummary(createFriendProfileSummaryFallback(friend));
+    setIsFriendProfileDialogOpen(true);
+  };
+
   const requestFollowByHandle = async (
     rawHandle: string,
     options?: { preferredName?: string; preferredGoal?: string; clearInputs?: boolean }
@@ -3338,6 +3498,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const handleRemoveFriend = (friendId: string) => {
     const friend = friendsById.get(friendId);
     if (!friend) return;
+    if (activeFriendProfileId === friendId) {
+      closeFriendProfileDialog();
+    }
 
     const normalizedFriendHandle = sanitizeHandleInput(friend.handle);
 
@@ -5348,16 +5511,27 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                             <p className="line-clamp-1 text-sm text-muted-foreground">{friend.handle}</p>
                             <p className="mt-1 text-xs text-muted-foreground">Meta: {friend.goal}</p>
                           </div>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => handleRemoveFriend(friend.id)}
-                          >
-                            <UserMinus className="h-4 w-4" />
-                            Remover
-                          </Button>
+                          <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOpenFriendProfileDialog(friend)}
+                            >
+                              <Search className="h-4 w-4" />
+                              Ver perfil
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => handleRemoveFriend(friend.id)}
+                            >
+                              <UserMinus className="h-4 w-4" />
+                              Remover
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -6809,6 +6983,97 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog
+        open={isFriendProfileDialogOpen}
+        onOpenChange={(open) => (open ? setIsFriendProfileDialogOpen(true) : closeFriendProfileDialog())}
+      >
+        <DialogContent className="max-w-2xl">
+          {activeFriendProfile && displayedFriendProfileSummary && (
+            <div className="space-y-4">
+              <DialogHeader className="text-left">
+                <DialogTitle>Perfil do amigo</DialogTitle>
+                <DialogDescription>
+                  Dados de {displayedFriendProfileSummary.name} e fotos publicadas no feed.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <img
+                  src={resolveFriendAvatarUrl(activeFriendProfile)}
+                  alt={`Foto de ${displayedFriendProfileSummary.name}`}
+                  className="h-20 w-20 rounded-full border border-border/70 object-cover bg-secondary"
+                  onError={handleAvatarImageError}
+                />
+                <div className="min-w-0">
+                  <p className="line-clamp-1 text-lg font-semibold">{displayedFriendProfileSummary.name}</p>
+                  <p className="line-clamp-1 text-sm text-muted-foreground">{displayedFriendProfileSummary.handle}</p>
+                </div>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border border-border/70 bg-card/40 p-3">
+                  <p className="text-xs text-muted-foreground">Nome</p>
+                  <p className="line-clamp-1 text-sm font-semibold">{displayedFriendProfileSummary.name}</p>
+                </div>
+                <div className="rounded-lg border border-border/70 bg-card/40 p-3">
+                  <p className="text-xs text-muted-foreground">Meta</p>
+                  <p className="line-clamp-1 text-sm font-semibold">{displayedFriendProfileSummary.goal}</p>
+                </div>
+                <div className="rounded-lg border border-border/70 bg-card/40 p-3">
+                  <p className="text-xs text-muted-foreground">Pontuacao</p>
+                  <p className="line-clamp-1 text-sm font-semibold">
+                    {isFriendProfileSummaryLoading
+                      ? 'Carregando...'
+                      : displayedFriendProfileSummary.points === null
+                        ? 'Indisponivel'
+                        : `${displayedFriendProfileSummary.points} pontos`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-semibold">
+                  Fotos do feed ({activeFriendFeedPosts.length})
+                </p>
+                {!activeFriendFeedPosts.length && (
+                  <p className="text-sm text-muted-foreground">
+                    Esse perfil ainda nao publicou fotos no feed.
+                  </p>
+                )}
+                {!!activeFriendFeedPosts.length && (
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {activeFriendFeedPosts.map((post) => (
+                      <img
+                        key={post.id}
+                        src={post.imageDataUrl}
+                        alt={`Foto de ${displayedFriendProfileSummary.name}`}
+                        className="aspect-square w-full rounded-md border border-border/70 bg-background/65 object-cover"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <Button type="button" variant="outline" onClick={closeFriendProfileDialog}>
+                  Fechar
+                </Button>
+                <Button
+                  type="button"
+                  variant="energy"
+                  onClick={() => {
+                    startChatWithFriend(activeFriendProfile.id);
+                    closeFriendProfileDialog();
+                  }}
+                >
+                  Abrir chat
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(chatSharedPreviewItem)}

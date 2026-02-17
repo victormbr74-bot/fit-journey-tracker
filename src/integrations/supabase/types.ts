@@ -285,6 +285,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_profile_public_summary: {
+        Args: { target_profile_id?: string | null; target_handle?: string | null }
+        Returns: {
+          goal: string | null
+          handle: string
+          name: string
+          points: number
+          profile_id: string
+        }[]
+      }
       is_own_profile: { Args: { profile_id: string }; Returns: boolean }
       is_profile_handle_available: {
         Args: { handle_input: string; exclude_profile_id?: string | null }
