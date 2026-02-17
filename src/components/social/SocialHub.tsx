@@ -1,5 +1,6 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   BellRing,
   Camera,
   ChevronLeft,
@@ -11,13 +12,19 @@ import {
   Heart,
   ImagePlus,
   Instagram,
+  Lock,
   Loader2,
+  Mic,
   MessageCircle,
+  MoreVertical,
+  Paperclip,
   Pencil,
+  Phone,
   Plus,
   Search,
   Send,
   Share2,
+  Smile,
   Smartphone,
   Target,
   Trophy,
@@ -25,6 +32,7 @@ import {
   UserMinus,
   UserPlus,
   Users,
+  Video,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -81,6 +89,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { disableSocialGlobalState, isSocialGlobalStateAvailable } from '@/lib/socialSyncCapability';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface SocialHubProps {
   profile: UserProfile;
@@ -188,6 +197,8 @@ const STORY_DURATION_HOURS = 24;
 const SOCIAL_GLOBAL_STATE_ID = true;
 const GLOBAL_SYNC_POLL_INTERVAL_MS = 3500;
 const PHONE_REGEX = /^[0-9()+\-\s]{8,20}$/;
+const FIT_CHAT_ENTRY_PATH = '/chat';
+const FIT_CHAT_WEB_PUSH_PUBLIC_KEY = import.meta.env.VITE_FITCHAT_WEB_PUSH_PUBLIC_KEY as string | undefined;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const sanitizeHandleInput = (value: string) => sanitizeHandleBody(value);
@@ -197,6 +208,14 @@ const isValidPhoneInput = (value: string) => {
   if (!trimmed || !PHONE_REGEX.test(trimmed)) return false;
   const normalized = normalizePhoneDigits(trimmed);
   return normalized.length >= 8 && normalized.length <= 20;
+};
+
+const decodeBase64UrlToUint8Array = (value: string) => {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const normalized = `${base64}${padding}`;
+  const raw = window.atob(normalized);
+  return Uint8Array.from(raw, (char) => char.charCodeAt(0));
 };
 
 const formatDateTime = (isoDate: string) => {
@@ -571,6 +590,69 @@ const getInitials = (name: string) => {
   return `${words[0][0]}${words[1][0]}`.toUpperCase();
 };
 
+const CHAT_AVATAR_COLORS = [
+  '#607d8b',
+  '#6d4c41',
+  '#455a64',
+  '#4e6d7a',
+  '#5d6d7e',
+  '#546e7a',
+];
+
+const CHAT_BACKGROUND_STYLE = {
+  backgroundColor: '#ece5dd',
+  backgroundImage:
+    'radial-gradient(circle at 1px 1px, rgba(164,149,138,0.22) 1.2px, transparent 0)',
+  backgroundSize: '24px 24px',
+};
+
+const formatChatListTime = (isoDate: string) => {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const isSameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+
+  if (isSameDay) {
+    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+};
+
+const formatChatDayLabel = (isoDate: string) => {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const isSameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+
+  if (isSameDay) return 'HOJE';
+  return date.toLocaleDateString('pt-BR').toUpperCase();
+};
+
+const formatChatPreview = (message: SocialChatMessage | null) => {
+  if (!message) return 'Toque para iniciar conversa';
+  if (message.postId) return message.sender === 'me' ? 'Voce compartilhou um post' : 'Compartilhou um post';
+  if (message.storyId) return message.sender === 'me' ? 'Voce compartilhou uma story' : 'Compartilhou uma story';
+  return message.text.replace(/\s+/g, ' ').trim();
+};
+
+const getChatAvatarColor = (seed: string) => {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash << 5) - hash + seed.charCodeAt(index);
+    hash |= 0;
+  }
+  return CHAT_AVATAR_COLORS[Math.abs(hash) % CHAT_AVATAR_COLORS.length];
+};
+
 export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs = true }: SocialHubProps) {
   const storageKey = useMemo(() => `${SOCIAL_HUB_STORAGE_PREFIX}${profile.id}`, [profile.id]);
   const seenChatEventsStorageKey = useMemo(
@@ -595,6 +677,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     const navigatorWithContacts = navigator as NavigatorWithContacts;
     return typeof navigatorWithContacts.contacts?.select === 'function';
   }, []);
+  const isMobile = useIsMobile();
 
   const [socialState, setSocialState] = useState<SocialState>(EMPTY_SOCIAL_STATE);
   const [globalPosts, setGlobalPosts] = useState<SocialFeedPost[]>([]);
@@ -637,8 +720,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [feedShareFriendId, setFeedShareFriendId] = useState('');
   const [chatInput, setChatInput] = useState('');
   const [chatEventsLoaded, setChatEventsLoaded] = useState(false);
+  const [isRegisteringPush, setIsRegisteringPush] = useState(false);
+  const [pushNotificationsReady, setPushNotificationsReady] = useState(false);
   const [chatFriendSearch, setChatFriendSearch] = useState('');
   const [pendingChatFriendId, setPendingChatFriendId] = useState('');
+  const [showChatListOnMobile, setShowChatListOnMobile] = useState(true);
   const [keepChatHistory, setKeepChatHistory] = useState(true);
   const [chatHistoryPreferenceLoaded, setChatHistoryPreferenceLoaded] = useState(false);
 
@@ -726,9 +812,106 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
   }, [triggerSystemNotification]);
 
+  const registerPushSubscriptionForCurrentDevice = useCallback(async (
+    options?: { requestPermission?: boolean; notifyOnError?: boolean }
+  ) => {
+    const requestPermission = options?.requestPermission ?? false;
+    const notifyOnError = options?.notifyOnError ?? true;
+
+    if (typeof window === 'undefined') return false;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      if (notifyOnError) {
+        toast.error('Seu dispositivo nao suporta notificacoes push do FitChat.');
+      }
+      setPushNotificationsReady(false);
+      return false;
+    }
+
+    if (!FIT_CHAT_WEB_PUSH_PUBLIC_KEY) {
+      if (notifyOnError) {
+        toast.error('Chave de push nao configurada no app (VITE_FITCHAT_WEB_PUSH_PUBLIC_KEY).');
+      }
+      setPushNotificationsReady(false);
+      return false;
+    }
+
+    try {
+      let permission = Notification.permission;
+      if (permission !== 'granted' && requestPermission) {
+        permission = await Notification.requestPermission();
+      }
+
+      if (permission !== 'granted') {
+        setPushNotificationsReady(false);
+        return false;
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: decodeBase64UrlToUint8Array(FIT_CHAT_WEB_PUSH_PUBLIC_KEY),
+        });
+      }
+
+      const serialized = subscription.toJSON();
+      const p256dh = serialized.keys?.p256dh;
+      const auth = serialized.keys?.auth;
+      if (!p256dh || !auth) {
+        throw new Error('Assinatura de push invalida.');
+      }
+
+      const { error } = await supabase
+        .from('chat_push_subscriptions')
+        .upsert(
+          {
+            profile_id: profile.id,
+            endpoint: subscription.endpoint,
+            p256dh,
+            auth,
+            user_agent: navigator.userAgent || null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'endpoint' }
+        );
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setPushNotificationsReady(true);
+      return true;
+    } catch (error) {
+      console.error('Erro ao registrar push do FitChat:', error);
+      setPushNotificationsReady(false);
+      if (notifyOnError) {
+        toast.error('Nao foi possivel ativar o push do FitChat neste dispositivo.');
+      }
+      return false;
+    }
+  }, [profile.id]);
+
   useEffect(() => {
     setActiveSection(defaultSection);
   }, [defaultSection]);
+
+  useEffect(() => {
+    if (!isMobile) {
+      setShowChatListOnMobile(false);
+      return;
+    }
+
+    if (activeSection === 'chat') {
+      setShowChatListOnMobile(true);
+    }
+  }, [activeSection, isMobile]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    if (socialState.friends.length) return;
+    setShowChatListOnMobile(true);
+  }, [isMobile, socialState.friends.length]);
 
   useEffect(() => {
     applyingRemoteSnapshotRef.current = false;
@@ -737,6 +920,24 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     notifiedRemoteSyncUnavailableRef.current = false;
     setChatHistoryPreferenceLoaded(false);
   }, [profile.id]);
+
+  useEffect(() => {
+    let canceled = false;
+
+    const syncPushSubscription = async () => {
+      const success = await registerPushSubscriptionForCurrentDevice({
+        requestPermission: false,
+        notifyOnError: false,
+      });
+      if (canceled) return;
+      setPushNotificationsReady(success);
+    };
+
+    void syncPushSubscription();
+    return () => {
+      canceled = true;
+    };
+  }, [registerPushSubscriptionForCurrentDevice]);
 
   useEffect(() => {
     try {
@@ -1955,6 +2156,45 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     });
   }, [chatFriendSearch, socialState.friends]);
 
+  const chatMessagesByFriend = useMemo(() => {
+    const grouped = new Map<string, SocialChatMessage[]>();
+    socialState.chatMessages.forEach((message) => {
+      const list = grouped.get(message.friendId) || [];
+      list.push(message);
+      grouped.set(message.friendId, list);
+    });
+    grouped.forEach((messages) => {
+      messages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    });
+    return grouped;
+  }, [socialState.chatMessages]);
+
+  const chatFriendConversations = useMemo(
+    () =>
+      filteredChatFriends
+        .map((friend) => {
+          const friendMessages = chatMessagesByFriend.get(friend.id) || [];
+          const lastMessage = friendMessages.length ? friendMessages[friendMessages.length - 1] : null;
+          const unreadCount = friend.id === activeChatFriendId
+            ? 0
+            : friendMessages.filter((message) => message.sender === 'friend').length;
+
+          return {
+            friend,
+            lastMessage,
+            unreadCount,
+            lastActivityAt: lastMessage?.createdAt || friend.addedAt,
+          };
+        })
+        .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()),
+    [activeChatFriendId, chatMessagesByFriend, filteredChatFriends]
+  );
+
+  const activeChatDayLabel = useMemo(() => {
+    if (!activeChatMessages.length) return '';
+    return formatChatDayLabel(activeChatMessages[0].createdAt);
+  }, [activeChatMessages]);
+
   useEffect(() => {
     if (!socialState.friends.length) {
       setPendingChatFriendId('');
@@ -2096,24 +2336,22 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   }, [activeChatMessages]);
 
   const handleEnableBrowserNotifications = async () => {
-    if (!('Notification' in window)) {
-      toast.error('Seu navegador nao suporta notificacoes nativas.');
-      return;
-    }
+    if (isRegisteringPush) return;
 
-    const permission = await Notification.requestPermission();
-    if (permission === 'granted') {
-      if ('serviceWorker' in navigator) {
-        try {
-          await navigator.serviceWorker.ready;
-        } catch {
-          // Se falhar, segue com notificacao web padrao.
-        }
+    setIsRegisteringPush(true);
+    const enabled = await registerPushSubscriptionForCurrentDevice({
+      requestPermission: true,
+      notifyOnError: true,
+    });
+    setIsRegisteringPush(false);
+
+    if (!enabled) {
+      if ('Notification' in window && Notification.permission !== 'granted') {
+        toast.error('Permissao de notificacoes nao concedida.');
       }
-      toast.success('Notificacoes do FitChat ativadas no celular/navegador.');
       return;
     }
-    toast.error('Permissao de notificacoes nao concedida.');
+    toast.success('Notificacoes do FitChat ativadas no celular/navegador.');
   };
 
   const handleFriendHandleChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -2923,6 +3161,35 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setGlobalChatEvents((previous) => sanitizeChatEvents([...previous, event]));
   };
 
+  const notifyFitChatPush = async (
+    receiverHandle: string,
+    text: string,
+    postId?: string,
+    storyId?: string
+  ) => {
+    const normalizedReceiverHandle = toHandle(receiverHandle);
+    if (!normalizedReceiverHandle || normalizedReceiverHandle === profileHandle) return;
+
+    const messagePreview = text.trim().slice(0, 160);
+    if (!messagePreview) return;
+
+    const { error } = await supabase.functions.invoke('fitchat-push', {
+      body: {
+        receiver_handle: normalizedReceiverHandle,
+        sender_name: profile.name,
+        sender_handle: profileHandle,
+        text: messagePreview,
+        post_id: postId || null,
+        story_id: storyId || null,
+        target_path: FIT_CHAT_ENTRY_PATH,
+      },
+    });
+
+    if (error) {
+      console.error('Erro ao enviar push do FitChat:', error);
+    }
+  };
+
   const appendChatMessage = (message: SocialChatMessage) => {
     setSocialState((prev) => ({
       ...prev,
@@ -2962,6 +3229,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       storyId,
     });
 
+    void notifyFitChatPush(friend.handle, text, postId, storyId);
+
     return true;
   };
 
@@ -2969,6 +3238,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     if (!friendId) return;
     setPendingChatFriendId(friendId);
     setActiveChatFriendId(friendId);
+    if (isMobile) {
+      setShowChatListOnMobile(false);
+    }
   };
 
   const handleStartChat = (friendId?: string) => {
@@ -3646,300 +3918,396 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         </TabsContent>
 
         <TabsContent value="chat" className="space-y-4">
-          <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="text-lg">FitChat</CardTitle>
-              <CardDescription>Mensagens instantaneas e contatos em um chat focado no seu treino.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="rounded-xl border border-border/70 bg-card/40 p-3 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="font-medium">Encontrar contatos pelo celular</p>
-                    <p className="text-xs text-muted-foreground">
-                      Importe contatos validos do aparelho e veja quem ja usa o SouFit.
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleImportDeviceContacts}
-                    disabled={isImportingContacts || !contactPickerSupported}
-                  >
-                    {isImportingContacts ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Importando...
-                      </>
-                    ) : (
-                      <>
-                        <Smartphone className="h-4 w-4" />
-                        Buscar contatos
-                      </>
-                    )}
-                  </Button>
-                </div>
-                {!contactPickerSupported && (
-                  <p className="text-xs text-muted-foreground">
-                    Seu navegador/dispositivo nao suporta leitura de contatos.
-                  </p>
-                )}
-                {importedContactsCount > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    {importedContactsCount} contato(s) valido(s) analisado(s) nesta importacao.
-                  </p>
-                )}
-                {!!matchedPhoneContacts.length && (
-                  <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
-                    {matchedPhoneContacts.map((match) => {
-                      const normalizedHandle = match.profile.normalizedHandle;
-                      const followedFriend = friendsByHandle.get(normalizedHandle);
-                      const alreadyFollowing = Boolean(followedFriend);
-                      const hasOutgoingRequest = outgoingPendingHandles.has(normalizedHandle);
-                      const hasIncomingRequest = incomingPendingHandles.has(normalizedHandle);
-                      const isMyOwnProfile = normalizedHandle === normalizedProfileHandle;
-
-                      return (
-                        <div
-                          key={match.id}
-                          className="rounded-lg border border-border/60 bg-background/45 p-2.5"
+          <Card className="overflow-hidden border-border/70 bg-[#111b21] shadow-xl">
+            <CardContent className="p-0">
+              <div className="grid min-h-[680px] md:grid-cols-[340px,1fr]">
+                <section
+                  className={cn(
+                    'flex flex-col bg-[#111b21] text-white md:border-r md:border-white/10',
+                    !isMobile ? 'md:flex' : showChatListOnMobile ? 'flex' : 'hidden md:flex'
+                  )}
+                >
+                  <header className="bg-[#075e54] px-4 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xl font-semibold">FitChat</p>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={handleImportDeviceContacts}
+                          disabled={isImportingContacts || !contactPickerSupported}
+                          className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                          title="Importar contatos do celular"
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-semibold">{match.contactName}</p>
-                              <p className="text-xs text-muted-foreground">{match.contactPhone}</p>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                No app: {match.profile.name} ({match.profile.handle})
-                              </p>
-                            </div>
-                            <div className="flex flex-col gap-1.5">
+                          {isImportingContacts ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Smartphone className="h-4 w-4" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStartChat()}
+                          disabled={!socialState.friends.length}
+                          className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                          title="Iniciar chat"
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] font-medium uppercase tracking-wide text-emerald-50/75">
+                      <span className="border-b-2 border-[#25d366] pb-1 text-[#25d366]">Conversas</span>
+                      <span className="opacity-70">Status</span>
+                      <span className="opacity-70">Chamadas</span>
+                    </div>
+                  </header>
+
+                  <div className="border-b border-white/10 px-3 py-2">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8696a0]" />
+                      <Input
+                        value={chatFriendSearch}
+                        onChange={(event) => setChatFriendSearch(event.target.value)}
+                        placeholder="Pesquisar contato"
+                        className="h-9 rounded-full border-0 bg-[#202c33] pl-9 text-sm text-white placeholder:text-[#8696a0] focus-visible:ring-1 focus-visible:ring-[#25d366]"
+                      />
+                    </div>
+                    {!contactPickerSupported && (
+                      <p className="mt-2 text-[11px] text-[#8696a0]">
+                        Seu navegador nao permite ler contatos do celular.
+                      </p>
+                    )}
+                    {importedContactsCount > 0 && (
+                      <p className="mt-2 text-[11px] text-[#25d366]">
+                        {importedContactsCount} contato(s) valido(s) analisado(s).
+                      </p>
+                    )}
+                  </div>
+
+                  {!!matchedPhoneContacts.length && (
+                    <div className="border-b border-white/10 px-3 py-2">
+                      <p className="text-[11px] font-medium text-[#25d366]">
+                        Contatos encontrados no SouFit
+                      </p>
+                      <div className="mt-2 space-y-1.5">
+                        {matchedPhoneContacts.slice(0, 3).map((match) => {
+                          const normalizedHandle = match.profile.normalizedHandle;
+                          const followedFriend = friendsByHandle.get(normalizedHandle);
+                          const alreadyFollowing = Boolean(followedFriend);
+                          const hasOutgoingRequest = outgoingPendingHandles.has(normalizedHandle);
+                          const hasIncomingRequest = incomingPendingHandles.has(normalizedHandle);
+                          const isMyOwnProfile = normalizedHandle === normalizedProfileHandle;
+
+                          return (
+                            <div
+                              key={match.id}
+                              className="flex items-center justify-between gap-2 rounded-lg bg-[#182229] px-2 py-1.5"
+                            >
+                              <div className="min-w-0">
+                                <p className="line-clamp-1 text-xs font-medium text-white">{match.contactName}</p>
+                                <p className="line-clamp-1 text-[11px] text-[#8696a0]">{match.profile.handle}</p>
+                              </div>
                               {alreadyFollowing && followedFriend ? (
-                                <Button
+                                <button
                                   type="button"
-                                  size="sm"
-                                  variant="outline"
                                   onClick={() => startChatWithFriend(followedFriend.id)}
+                                  className="rounded-full bg-[#25d366] px-2 py-1 text-[11px] font-medium text-[#111b21]"
                                 >
-                                  Abrir FitChat
-                                </Button>
+                                  Abrir
+                                </button>
                               ) : hasOutgoingRequest ? (
-                                <Badge variant="secondary">Pedido pendente</Badge>
+                                <span className="text-[11px] text-[#8696a0]">Pendente</span>
                               ) : hasIncomingRequest ? (
-                                <Badge variant="outline">Aceite o pedido</Badge>
+                                <span className="text-[11px] text-[#8696a0]">Aceite pedido</span>
                               ) : isMyOwnProfile ? (
-                                <Badge variant="outline">Voce</Badge>
+                                <span className="text-[11px] text-[#8696a0]">Voce</span>
                               ) : (
-                                <Button
+                                <button
                                   type="button"
-                                  size="sm"
-                                  variant="energy"
                                   onClick={() => handleFollowMatchedContact(match)}
+                                  className="rounded-full border border-[#25d366] px-2 py-1 text-[11px] font-medium text-[#25d366]"
                                 >
                                   Seguir
-                                </Button>
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex-1 overflow-y-auto">
+                    {!socialState.friends.length && (
+                      <p className="px-4 py-4 text-sm text-[#8696a0]">
+                        Siga perfis para iniciar o FitChat.
+                      </p>
+                    )}
+                    {!!socialState.friends.length && !chatFriendConversations.length && (
+                      <p className="px-4 py-4 text-sm text-[#8696a0]">
+                        Nenhum contato encontrado com essa busca.
+                      </p>
+                    )}
+                    {chatFriendConversations.map(({ friend, lastMessage, unreadCount }) => {
+                      const isPending = friend.id === pendingChatFriendId;
+                      const isActive = friend.id === activeChatFriendId;
+                      const preview = formatChatPreview(lastMessage);
+                      const lastTime = lastMessage ? formatChatListTime(lastMessage.createdAt) : '';
+                      const highlightRow = isPending || isActive;
+                      const avatarColor = getChatAvatarColor(friend.id || friend.handle || friend.name);
+
+                      return (
+                        <button
+                          key={friend.id}
+                          type="button"
+                          onClick={() => startChatWithFriend(friend.id)}
+                          className={cn(
+                            'flex w-full items-start gap-3 px-3 py-2 text-left transition',
+                            highlightRow ? 'bg-[#2a3942]' : 'hover:bg-[#202c33]'
+                          )}
+                        >
+                          <div
+                            className="mt-1 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
+                            style={{ backgroundColor: avatarColor }}
+                          >
+                            {getInitials(friend.name)}
+                          </div>
+                          <div className="min-w-0 flex-1 border-b border-white/5 pb-2.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="line-clamp-1 text-sm font-semibold text-white">{friend.name}</p>
+                              <span className={cn('shrink-0 text-[11px]', unreadCount ? 'text-[#25d366]' : 'text-[#8696a0]')}>
+                                {lastTime}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex items-center justify-between gap-2">
+                              <p className="line-clamp-1 text-xs text-[#9caab3]">{preview}</p>
+                              {unreadCount > 0 && (
+                                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#25d366] px-1 text-[11px] font-semibold text-[#111b21]">
+                                  {unreadCount > 99 ? '99+' : unreadCount}
+                                </span>
                               )}
                             </div>
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
-                )}
-              </div>
 
-              <div className="rounded-xl border border-border/70 bg-card/35 p-3 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-medium">Contatos do FitChat</p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="energy"
-                    onClick={() => handleStartChat()}
-                    disabled={!socialState.friends.length}
-                  >
-                    <MessageCircle className="h-4 w-4" />
-                    Iniciar chat
-                  </Button>
-                </div>
-
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={chatFriendSearch}
-                    onChange={(event) => setChatFriendSearch(event.target.value)}
-                    className="pl-9"
-                    placeholder="Pesquisar contato por nome ou @usuario"
-                  />
-                </div>
-
-                <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border/60 bg-background/30 p-1.5">
-                  {!socialState.friends.length && (
-                    <p className="px-2 py-2 text-sm text-muted-foreground">
-                      Siga perfis para iniciar o FitChat.
-                    </p>
-                  )}
-                  {!!socialState.friends.length && !filteredChatFriends.length && (
-                    <p className="px-2 py-2 text-sm text-muted-foreground">
-                      Nenhum contato encontrado com essa busca.
-                    </p>
-                  )}
-                  {filteredChatFriends.map((friend) => {
-                    const isPending = friend.id === pendingChatFriendId;
-                    const isActive = friend.id === activeChatFriendId;
-                    return (
-                      <div
-                        key={friend.id}
-                        className={cn(
-                          'flex items-center justify-between gap-2 rounded-md border px-2 py-2 transition-colors',
-                          isPending
-                            ? 'border-primary/60 bg-primary/10'
-                            : 'border-transparent hover:border-primary/30 hover:bg-secondary/40'
-                        )}
+                  <div className="space-y-2 border-t border-white/10 bg-[#182229] px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label htmlFor="fit-chat-history" className="text-xs text-[#d1d7db]">
+                        Manter historico local
+                      </Label>
+                      <Switch
+                        id="fit-chat-history"
+                        checked={keepChatHistory}
+                        onCheckedChange={handleToggleKeepChatHistory}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleClearActiveConversation}
+                        disabled={!activeChatFriendId}
+                        className="rounded-full border border-white/20 px-3 py-1 text-[11px] text-[#d1d7db] disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 text-left"
-                          onClick={() => setPendingChatFriendId(friend.id)}
-                        >
-                          <p className="line-clamp-1 text-sm font-medium">{friend.name}</p>
-                          <p className="line-clamp-1 text-xs text-muted-foreground">{friend.handle}</p>
-                        </button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={isActive ? 'default' : 'outline'}
-                          onClick={() => handleStartChat(friend.id)}
-                        >
-                          {isActive ? 'Em chat' : 'Iniciar'}
-                        </Button>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="rounded-lg border border-border/60 bg-background/35 p-2.5 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <Label htmlFor="fit-chat-history" className="text-sm">
-                      Manter mensagens no historico
-                    </Label>
-                    <Switch
-                      id="fit-chat-history"
-                      checked={keepChatHistory}
-                      onCheckedChange={handleToggleKeepChatHistory}
-                    />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={handleClearActiveConversation}
-                      disabled={!activeChatFriendId}
-                    >
-                      Apagar conversa atual
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="text-destructive hover:text-destructive"
-                      onClick={handleClearAllChatHistory}
-                      disabled={!socialState.chatMessages.length}
-                    >
-                      Apagar todo historico
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {!!socialState.friends.length && activeChatFriend && (
-                <div className="overflow-hidden rounded-xl border border-border/70">
-                  <div className="flex items-center gap-3 bg-[#202c33] px-4 py-3 text-white">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#2a3942] text-sm font-semibold">
-                      {getInitials(activeChatFriend.name)}
-                    </div>
-                    <div>
-                      <p className="font-semibold leading-none">{activeChatFriend.name}</p>
-                      <p className="mt-1 text-xs text-slate-200">{activeChatFriend.handle}</p>
+                        Apagar conversa
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearAllChatHistory}
+                        disabled={!socialState.chatMessages.length}
+                        className="rounded-full border border-white/20 px-3 py-1 text-[11px] text-[#d1d7db] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Limpar tudo
+                      </button>
                     </div>
                   </div>
+                </section>
 
-                  <div
-                    ref={chatMessagesContainerRef}
-                    className="min-h-72 max-h-[460px] overflow-y-auto bg-[#0b141a] p-3 space-y-2"
-                  >
-                    {!activeChatMessages.length && (
-                      <p className="text-sm text-slate-300">Nenhuma mensagem ainda.</p>
-                    )}
-                    {activeChatMessages.map((message) => {
-                      const sharedPost = message.postId ? postsById.get(message.postId) : null;
-                      const sharedStory = message.storyId ? storiesById.get(message.storyId) : null;
-                      const isMine = message.sender === 'me';
-                      return (
-                        <div key={message.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                <section
+                  className={cn(
+                    'flex flex-col',
+                    !isMobile ? 'md:flex' : showChatListOnMobile ? 'hidden md:flex' : 'flex'
+                  )}
+                >
+                  {!!socialState.friends.length && activeChatFriend ? (
+                    <>
+                      <div className="flex items-center justify-between bg-[#075e54] px-3 py-2.5 text-white">
+                        <div className="flex items-center gap-2.5">
+                          {isMobile && (
+                            <button
+                              type="button"
+                              onClick={() => setShowChatListOnMobile(true)}
+                              className="rounded-full p-1.5 text-white hover:bg-white/15"
+                            >
+                              <ArrowLeft className="h-4 w-4" />
+                            </button>
+                          )}
                           <div
-                            className={`max-w-[86%] rounded-2xl px-3 py-2 shadow-sm ${
-                              isMine
-                                ? 'rounded-br-md bg-[#005c4b] text-white'
-                                : 'rounded-bl-md bg-[#202c33] text-slate-100'
-                            }`}
+                            className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold text-white"
+                            style={{ backgroundColor: getChatAvatarColor(activeChatFriend.id || activeChatFriend.handle) }}
                           >
-                            <p className="text-sm whitespace-pre-wrap break-words">{message.text}</p>
-                            {sharedPost && (
-                              <div className="mt-2 rounded-md border border-white/20 bg-black/20 p-2">
-                                <img
-                                  src={sharedPost.imageDataUrl}
-                                  alt={`Post de ${sharedPost.authorName}`}
-                                  className="h-24 w-full rounded-md object-cover"
-                                />
-                                <p className="mt-1 text-xs text-slate-200 line-clamp-2">{sharedPost.caption}</p>
-                              </div>
-                            )}
-                            {!sharedPost && sharedStory && (
-                              <div className="mt-2 rounded-md border border-white/20 bg-black/20 p-2">
-                                <img
-                                  src={sharedStory.imageDataUrl}
-                                  alt={`Story de ${sharedStory.authorName}`}
-                                  className="h-24 w-full rounded-md object-cover"
-                                />
-                                <p className="mt-1 text-xs text-slate-200 line-clamp-2">
-                                  Story: {sharedStory.caption || 'Sem legenda'}
-                                </p>
-                              </div>
-                            )}
-                            <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-slate-200">
-                              <span>{formatTime(message.createdAt)}</span>
-                              {isMine && <CheckCheck className="h-3.5 w-3.5" />}
-                            </div>
+                            {getInitials(activeChatFriend.name)}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold leading-none">{activeChatFriend.name}</p>
+                            <p className="mt-1 text-[11px] text-emerald-50/80">{activeChatFriend.handle}</p>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15"
+                            title="Ligar"
+                          >
+                            <Phone className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15"
+                            title="Videochamada"
+                          >
+                            <Video className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15"
+                            title="Mais opcoes"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
 
-                  <div className="border-t border-[#2a3942] bg-[#202c33] p-3">
-                    <form className="flex items-center gap-2" onSubmit={handleSendChatMessage}>
-                      <Input
-                        value={chatInput}
-                        onChange={(event) => setChatInput(event.target.value)}
-                        placeholder="Digite uma mensagem"
-                        className="h-11 border-0 bg-[#2a3942] text-white placeholder:text-slate-300 focus-visible:ring-1 focus-visible:ring-[#25d366]"
-                      />
-                      <Button
-                        type="submit"
-                        className="h-11 w-11 rounded-full bg-[#25d366] p-0 text-[#111b21] hover:bg-[#1fa855]"
+                      <div
+                        ref={chatMessagesContainerRef}
+                        className="flex-1 overflow-y-auto px-3 py-3 md:px-4"
+                        style={CHAT_BACKGROUND_STYLE}
                       >
-                        <Send className="h-4 w-4" />
-                        <span className="sr-only">Enviar mensagem</span>
-                      </Button>
-                    </form>
-                  </div>
-                </div>
-              )}
+                        {!!activeChatMessages.length && (
+                          <div className="mx-auto mb-3 w-fit rounded-full bg-[#d9eef8] px-3 py-1 text-[10px] font-semibold tracking-wide text-[#4d6572]">
+                            {activeChatDayLabel}
+                          </div>
+                        )}
+                        <div className="mx-auto mb-3 flex w-full max-w-[720px] items-start gap-2 rounded-md bg-[#fff3c4] px-3 py-2 text-[11px] text-[#6a5d31] shadow-sm">
+                          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <p>
+                            As mensagens e chamadas desta conversa sao protegidas com criptografia de ponta a ponta.
+                          </p>
+                        </div>
+
+                        {!activeChatMessages.length && (
+                          <p className="px-1 text-sm text-[#667781]">Nenhuma mensagem ainda.</p>
+                        )}
+
+                        <div className="space-y-1.5">
+                          {activeChatMessages.map((message) => {
+                            const sharedPost = message.postId ? postsById.get(message.postId) : null;
+                            const sharedStory = message.storyId ? storiesById.get(message.storyId) : null;
+                            const isMine = message.sender === 'me';
+                            return (
+                              <div
+                                key={message.id}
+                                className={cn('flex', isMine ? 'justify-end' : 'justify-start')}
+                              >
+                                <div
+                                  className={cn(
+                                    'max-w-[85%] rounded-xl px-3 py-2 shadow-sm md:max-w-[72%]',
+                                    isMine
+                                      ? 'rounded-br-sm bg-[#dcf8c6] text-[#111b21]'
+                                      : 'rounded-bl-sm bg-white text-[#111b21]'
+                                  )}
+                                >
+                                  <p className="whitespace-pre-wrap break-words text-sm">{message.text}</p>
+                                  {sharedPost && (
+                                    <div className="mt-2 rounded-md border border-[#d0d7dd] bg-[#f7f9fb] p-2">
+                                      <img
+                                        src={sharedPost.imageDataUrl}
+                                        alt={`Post de ${sharedPost.authorName}`}
+                                        className="h-24 w-full rounded-md object-cover"
+                                      />
+                                      <p className="mt-1 line-clamp-2 text-xs text-[#52656f]">{sharedPost.caption}</p>
+                                    </div>
+                                  )}
+                                  {!sharedPost && sharedStory && (
+                                    <div className="mt-2 rounded-md border border-[#d0d7dd] bg-[#f7f9fb] p-2">
+                                      <img
+                                        src={sharedStory.imageDataUrl}
+                                        alt={`Story de ${sharedStory.authorName}`}
+                                        className="h-24 w-full rounded-md object-cover"
+                                      />
+                                      <p className="mt-1 line-clamp-2 text-xs text-[#52656f]">
+                                        Story: {sharedStory.caption || 'Sem legenda'}
+                                      </p>
+                                    </div>
+                                  )}
+                                  <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-[#667781]">
+                                    <span>{formatTime(message.createdAt)}</span>
+                                    {isMine && <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb]" />}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="border-t border-[#d7d2ca] bg-[#f0efef] px-2 py-2 md:px-3">
+                        <form className="flex items-center gap-2" onSubmit={handleSendChatMessage}>
+                          <div className="flex h-11 flex-1 items-center rounded-full bg-white px-2 shadow-sm">
+                            <button
+                              type="button"
+                              className="rounded-full p-2 text-[#8696a0] transition hover:bg-[#f1f2f3]"
+                              title="Emoji"
+                            >
+                              <Smile className="h-5 w-5" />
+                            </button>
+                            <Input
+                              value={chatInput}
+                              onChange={(event) => setChatInput(event.target.value)}
+                              placeholder="Digite aqui..."
+                              className="h-auto border-0 bg-transparent px-1 text-sm text-[#111b21] placeholder:text-[#8696a0] focus-visible:ring-0"
+                            />
+                            <button
+                              type="button"
+                              className="rounded-full p-2 text-[#8696a0] transition hover:bg-[#f1f2f3]"
+                              title="Anexar"
+                            >
+                              <Paperclip className="h-4.5 w-4.5" />
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-full p-2 text-[#8696a0] transition hover:bg-[#f1f2f3]"
+                              title="Camera"
+                            >
+                              <Camera className="h-4.5 w-4.5" />
+                            </button>
+                          </div>
+                          <Button
+                            type="submit"
+                            className="h-11 w-11 rounded-full bg-[#25d366] p-0 text-[#111b21] hover:bg-[#21bd5b]"
+                          >
+                            {chatInput.trim() ? (
+                              <Send className="h-4 w-4" />
+                            ) : (
+                              <Mic className="h-4.5 w-4.5" />
+                            )}
+                            <span className="sr-only">Enviar mensagem</span>
+                          </Button>
+                        </form>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-[#667781]" style={CHAT_BACKGROUND_STYLE}>
+                      Escolha um contato para iniciar uma conversa no FitChat.
+                    </div>
+                  )}
+                </section>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
-
         <TabsContent value="feed" className="social-feed-column space-y-4 md:space-y-5">
           <div className="flex items-center gap-2 px-1">
             <div className="relative flex-1">
@@ -4198,15 +4566,34 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               <CardTitle className="text-lg">Notificacoes</CardTitle>
               <CardDescription>{unreadNotifications} nao lida(s).</CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" onClick={handleEnableBrowserNotifications}>
-                <BellRing className="h-4 w-4" />
-                Ativar notificacoes do FitChat
+            <CardContent className="flex flex-wrap gap-2 items-center">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleEnableBrowserNotifications}
+                disabled={isRegisteringPush}
+              >
+                {isRegisteringPush ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Ativando...
+                  </>
+                ) : (
+                  <>
+                    <BellRing className="h-4 w-4" />
+                    Ativar notificacoes do FitChat
+                  </>
+                )}
               </Button>
               <Button type="button" variant="outline" onClick={handleMarkAllNotificationsAsRead}>
                 <CheckCircle2 className="h-4 w-4" />
                 Marcar todas como lidas
               </Button>
+              <p className="text-xs text-muted-foreground">
+                {pushNotificationsReady
+                  ? 'Push ativo neste dispositivo.'
+                  : 'Push ainda nao ativado neste dispositivo.'}
+              </p>
             </CardContent>
           </Card>
 

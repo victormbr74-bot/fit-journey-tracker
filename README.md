@@ -96,3 +96,43 @@ supabase link --project-ref wwpvogwbiyprtusbiubh
 ```
 
 If the function is unavailable, the app automatically falls back to local assistant logic.
+
+## FitChat Push Notifications (App Closed)
+
+To enable real push notifications when the app/browser is closed:
+
+1. Generate VAPID keys:
+
+```sh
+npx web-push generate-vapid-keys
+```
+
+2. Add the public key to frontend `.env`:
+
+```sh
+VITE_FITCHAT_WEB_PUSH_PUBLIC_KEY="YOUR_PUBLIC_VAPID_KEY"
+```
+
+3. Add secrets to Supabase:
+
+```sh
+supabase secrets set FITCHAT_WEB_PUSH_VAPID_PUBLIC_KEY=YOUR_PUBLIC_VAPID_KEY
+supabase secrets set FITCHAT_WEB_PUSH_VAPID_PRIVATE_KEY=YOUR_PRIVATE_VAPID_KEY
+supabase secrets set FITCHAT_WEB_PUSH_SUBJECT=mailto:seu-email@dominio.com
+```
+
+4. Apply migrations and deploy function:
+
+```sh
+supabase db push
+supabase functions deploy fitchat-push
+```
+
+5. Test on mobile:
+
+```txt
+- Open the app via HTTPS in a supported browser (Chrome Android recommended).
+- Go to FitChat and tap "Ativar notificacoes do FitChat".
+- Log in with another account and send a message to this account.
+- Close/minimize the app and confirm push delivery.
+```
