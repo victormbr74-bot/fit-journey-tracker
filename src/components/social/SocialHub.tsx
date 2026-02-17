@@ -213,7 +213,7 @@ const NOTIFICATION_LIMIT = 120;
 const MAX_IMAGE_SIZE = 1080;
 const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_GLOBAL_CHAT_ATTACHMENT_DATA_URL_LENGTH = 700000;
-const MAX_GLOBAL_CHAT_AUDIO_ATTACHMENT_DATA_URL_LENGTH = 1500000;
+const MAX_GLOBAL_CHAT_AUDIO_ATTACHMENT_DATA_URL_LENGTH = 4000000;
 const MAX_VOICE_RECORDING_SECONDS = 60;
 const DEFAULT_GOAL_TARGET = 1;
 const DEFAULT_GOAL_UNIT = 'tarefas';
@@ -796,6 +796,12 @@ const getGlobalChatAttachmentDataUrlLimit = (attachmentType: string) =>
   attachmentType.startsWith('audio/')
     ? MAX_GLOBAL_CHAT_AUDIO_ATTACHMENT_DATA_URL_LENGTH
     : MAX_GLOBAL_CHAT_ATTACHMENT_DATA_URL_LENGTH;
+
+const getAudioAttachmentExtension = (mimeType: string) => {
+  if (mimeType.includes('mp4')) return 'm4a';
+  if (mimeType.includes('ogg')) return 'ogg';
+  return 'webm';
+};
 
 const sanitizeClanAutoGoalTemplates = (templates: unknown): SocialClanAutoGoalTemplate[] => {
   if (!Array.isArray(templates)) return [];
@@ -4837,6 +4843,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       Boolean(attachment?.dataUrl) &&
       isShareableGlobalAttachmentType &&
       (attachment?.dataUrl.length || 0) <= maxAttachmentDataUrlLength;
+    if (attachment?.dataUrl && isShareableGlobalAttachmentType && !shouldShareAttachmentDataUrl) {
+      toast.error('Audio muito grande para envio. Grave uma mensagem menor.');
+      return false;
+    }
     const globalAttachmentDataUrl = shouldShareAttachmentDataUrl ? attachment?.dataUrl : undefined;
 
     const createdAt = new Date().toISOString();
@@ -4982,6 +4992,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       voiceChunksRef.current = [];
 
       const preferredMimeTypes = [
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/mp4',
+        'audio/aac',
         'audio/webm;codecs=opus',
         'audio/webm',
         'audio/ogg;codecs=opus',
@@ -4989,9 +5002,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       const selectedMimeType = preferredMimeTypes.find(
         (type) => typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(type)
       );
-      const recorder = selectedMimeType
-        ? new MediaRecorder(stream, { mimeType: selectedMimeType })
-        : new MediaRecorder(stream);
+      const recorderOptions = selectedMimeType
+        ? { mimeType: selectedMimeType, audioBitsPerSecond: 32000 }
+        : { audioBitsPerSecond: 32000 };
+      const recorder = new MediaRecorder(stream, recorderOptions);
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -5024,9 +5038,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         void (async () => {
           try {
             const dataUrl = await blobToDataUrl(audioBlob);
+            const maxDataUrlLength = getGlobalChatAttachmentDataUrlLimit(audioBlob.type || 'audio/webm');
+            if (dataUrl.length > maxDataUrlLength) {
+              toast.error('Audio muito grande para envio no chat. Grave uma mensagem menor.');
+              return;
+            }
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const extension = getAudioAttachmentExtension(audioBlob.type || 'audio/webm');
             setPendingChatAttachment({
-              name: `voz-${timestamp}.webm`,
+              name: `voz-${timestamp}.${extension}`,
               type: audioBlob.type || 'audio/webm',
               dataUrl,
             });
@@ -5096,6 +5116,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         : isAudio
           ? await blobToDataUrl(file)
           : '';
+      if (isAudio) {
+        const maxDataUrlLength = getGlobalChatAttachmentDataUrlLimit(file.type || 'audio/webm');
+        if (dataUrl.length > maxDataUrlLength) {
+          toast.error('Audio muito grande para envio no chat. Grave uma mensagem menor.');
+          return;
+        }
+      }
 
       setPendingChatAttachment({
         name: file.name || 'arquivo',
