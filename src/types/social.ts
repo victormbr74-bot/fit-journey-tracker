@@ -79,6 +79,8 @@ export interface SocialClan {
   goals: SocialClanGoal[];
   challenges: SocialClanChallenge[];
   autoGoalTemplates?: SocialClanAutoGoalTemplate[];
+  memberPoints?: Record<string, number>;
+  scoreUpdatedAt?: string;
 }
 
 export interface SocialFeedPost {

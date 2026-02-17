@@ -205,6 +205,7 @@ const DEFAULT_AUTO_WEEKLY_GOAL_TITLE = 'Treino semanal';
 const DEFAULT_AUTO_DAILY_GOAL_TARGET = 1;
 const DEFAULT_AUTO_WEEKLY_GOAL_TARGET = 4;
 const DEFAULT_AUTO_GOAL_UNIT = 'treinos';
+const CLAN_SELF_MEMBER_KEY = '__self__';
 const GLOBAL_FEED_POST_LIMIT = 500;
 const GLOBAL_STORY_LIMIT = 500;
 const GLOBAL_FRIEND_REQUEST_LIMIT = 500;
@@ -374,6 +375,20 @@ const normalizeGoalType = (goal: Partial<SocialClanGoal>): NonNullable<SocialCla
 
   if (goal.createdBy === 'personal') return 'personal';
   return 'manual';
+};
+
+const applyClanMemberPointsDelta = (
+  clan: SocialClan,
+  memberKey: string,
+  delta: number
+): Pick<SocialClan, 'memberPoints' | 'scoreUpdatedAt'> => {
+  const nextMemberPoints = sanitizeClanMemberPoints(clan.memberPoints, clan.memberIds);
+  const currentPoints = Number(nextMemberPoints[memberKey]) || 0;
+  nextMemberPoints[memberKey] = currentPoints + delta;
+  return {
+    memberPoints: nextMemberPoints,
+    scoreUpdatedAt: new Date().toISOString(),
+  };
 };
 
 interface ParsedGoalRequest {
@@ -887,6 +902,33 @@ const sanitizeClanChallenges = (challenges: unknown): SocialClanChallenge[] => {
     .filter((challenge): challenge is SocialClanChallenge => Boolean(challenge));
 };
 
+const sanitizeClanMemberPoints = (
+  rawMemberPoints: unknown,
+  memberIds: string[]
+): Record<string, number> => {
+  const nextPoints: Record<string, number> = {};
+  if (rawMemberPoints && typeof rawMemberPoints === 'object') {
+    Object.entries(rawMemberPoints as Record<string, unknown>).forEach(([memberKey, rawPoints]) => {
+      if (!memberKey) return;
+      const parsedPoints = Number(rawPoints);
+      if (!Number.isFinite(parsedPoints)) return;
+      nextPoints[memberKey] = Math.round(parsedPoints);
+    });
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(nextPoints, CLAN_SELF_MEMBER_KEY)) {
+    nextPoints[CLAN_SELF_MEMBER_KEY] = 0;
+  }
+
+  memberIds.forEach((memberId) => {
+    if (!Object.prototype.hasOwnProperty.call(nextPoints, memberId)) {
+      nextPoints[memberId] = 0;
+    }
+  });
+
+  return nextPoints;
+};
+
 const sanitizeClans = (
   clans: unknown,
   currentProfile: Pick<UserProfile, 'id' | 'name' | 'handle' | 'email'>
@@ -940,6 +982,8 @@ const sanitizeClans = (
         goals: sanitizeClanGoals(rawClan.goals),
         challenges: sanitizeClanChallenges(rawClan.challenges),
         autoGoalTemplates: sanitizeClanAutoGoalTemplates(rawClan.autoGoalTemplates),
+        memberPoints: sanitizeClanMemberPoints(rawClan.memberPoints, memberIds),
+        scoreUpdatedAt: isValidIsoDate(rawClan.scoreUpdatedAt) ? rawClan.scoreUpdatedAt : undefined,
       } as SocialClan;
     })
     .filter((clan): clan is SocialClan => Boolean(clan));
@@ -3295,10 +3339,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       friends: previous.friends.filter((item) => item.id !== friendId),
       clans: previous.clans.map((clan) => {
         const nextMemberIds = clan.memberIds.filter((memberId) => memberId !== friendId);
+        const nextMemberPoints = sanitizeClanMemberPoints(clan.memberPoints, nextMemberIds);
+        delete nextMemberPoints[friendId];
         if (clan.adminFriendId !== friendId) {
           return {
             ...clan,
             memberIds: nextMemberIds,
+            memberPoints: nextMemberPoints,
           };
         }
 
@@ -3310,6 +3357,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           adminHandle: toHandle(profileHandle),
           adminName: profile.name?.trim() || 'Voce',
           adminDefinedAt: new Date().toISOString(),
+          memberPoints: nextMemberPoints,
+          scoreUpdatedAt: new Date().toISOString(),
         };
       }),
       chatMessages: previous.chatMessages.filter((message) => message.friendId !== friendId),
@@ -3376,6 +3425,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     const nextMemberIds = selectedAdminFriend && !clanMemberIds.includes(selectedAdminFriend.id)
       ? [selectedAdminFriend.id, ...clanMemberIds]
       : clanMemberIds;
+    const nextMemberPoints = sanitizeClanMemberPoints({}, nextMemberIds);
 
     const nextClan: SocialClan = {
       id: createId(),
@@ -3390,6 +3440,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       createdAt: nowIso,
       goals: [],
       challenges: [],
+      memberPoints: nextMemberPoints,
+      scoreUpdatedAt: nowIso,
       autoGoalTemplates: [
         {
           id: `clan-auto-daily-${createId()}`,
@@ -3695,33 +3747,45 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       ...prev,
       clans: prev.clans.map((clan) => {
         if (clan.id !== clanId) return clan;
-        return {
-          ...clan,
-          goals: clan.goals.map((goal) => {
-            if (goal.id !== goalId) return goal;
-            const nextValue = Math.min(goal.targetValue, goal.currentValue + 1);
-            const completed = nextValue >= goal.targetValue;
-            const justCompleted = completed && !goal.completed;
+        let awardedPointsInClan = 0;
+        const nextGoals = clan.goals.map((goal) => {
+          if (goal.id !== goalId) return goal;
+          const nextValue = Math.min(goal.targetValue, goal.currentValue + 1);
+          const completed = nextValue >= goal.targetValue;
+          const justCompleted = completed && !goal.completed;
 
-            if (justCompleted) {
-              const pointsAwarded = goal.pointsAwarded ?? calculateGoalAwardPoints(goal.targetValue);
-              awardedPoints += pointsAwarded;
-              completedGoalTitle = goal.title;
-              return {
-                ...goal,
-                currentValue: nextValue,
-                completed: true,
-                pointsAwarded,
-                scoredAt: goal.scoredAt || new Date().toISOString(),
-              };
-            }
-
+          if (justCompleted) {
+            const pointsAwarded = goal.pointsAwarded ?? calculateGoalAwardPoints(goal.targetValue);
+            awardedPoints += pointsAwarded;
+            awardedPointsInClan += pointsAwarded;
+            completedGoalTitle = goal.title;
             return {
               ...goal,
               currentValue: nextValue,
-              completed,
+              completed: true,
+              pointsAwarded,
+              scoredAt: goal.scoredAt || new Date().toISOString(),
             };
-          }),
+          }
+
+          return {
+            ...goal,
+            currentValue: nextValue,
+            completed,
+          };
+        });
+
+        if (!awardedPointsInClan) {
+          return {
+            ...clan,
+            goals: nextGoals,
+          };
+        }
+
+        return {
+          ...clan,
+          goals: nextGoals,
+          ...applyClanMemberPointsDelta(clan, CLAN_SELF_MEMBER_KEY, awardedPointsInClan),
         };
       }),
     }));
@@ -3822,9 +3886,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     setSocialState((previous) => {
       let changed = false;
-      const nextClans = previous.clans.map((clan) => ({
-        ...clan,
-        goals: clan.goals.map((goal) => {
+      const nextClans = previous.clans.map((clan) => {
+        let penalizedPointsInClan = 0;
+        const nextGoals = clan.goals.map((goal) => {
           if (goal.completed || goal.penalizedAt || !goal.dueDate) return goal;
 
           const dueTimestamp = resolveGoalDueTimestamp(goal.dueDate);
@@ -3838,14 +3902,28 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             );
 
           penalizedPoints += pointsPenalty;
+          penalizedPointsInClan += pointsPenalty;
           penalizedGoalTitles.push(goal.title);
           return {
             ...goal,
             pointsPenalty,
             penalizedAt: new Date().toISOString(),
           };
-        }),
-      }));
+        });
+
+        if (!penalizedPointsInClan) {
+          return {
+            ...clan,
+            goals: nextGoals,
+          };
+        }
+
+        return {
+          ...clan,
+          goals: nextGoals,
+          ...applyClanMemberPointsDelta(clan, CLAN_SELF_MEMBER_KEY, -penalizedPointsInClan),
+        };
+      });
 
       if (!changed) return previous;
       return {
@@ -3878,18 +3956,54 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   }, [applyOverdueGoalPenalties]);
 
   const handleToggleChallengeDone = (clanId: string, challengeId: string) => {
+    let pointsDelta = 0;
+    let challengeTitle = '';
+    let becameCompleted = false;
+
     setSocialState((prev) => ({
       ...prev,
       clans: prev.clans.map((clan) => {
         if (clan.id !== clanId) return clan;
+        const nextChallenges = clan.challenges.map((challenge) => {
+          if (challenge.id !== challengeId) return challenge;
+          const nextCompleted = !challenge.completed;
+          pointsDelta += nextCompleted ? challenge.points : -challenge.points;
+          challengeTitle = challenge.title;
+          becameCompleted = nextCompleted;
+          return {
+            ...challenge,
+            completed: nextCompleted,
+          };
+        });
+
+        if (!pointsDelta) {
+          return {
+            ...clan,
+            challenges: nextChallenges,
+          };
+        }
+
         return {
           ...clan,
-          challenges: clan.challenges.map((challenge) =>
-            challenge.id === challengeId ? { ...challenge, completed: !challenge.completed } : challenge
-          ),
+          challenges: nextChallenges,
+          ...applyClanMemberPointsDelta(clan, CLAN_SELF_MEMBER_KEY, pointsDelta),
         };
       }),
     }));
+
+    if (!pointsDelta) return;
+
+    const reason = becameCompleted
+      ? `Desafio concluido: ${challengeTitle}`
+      : `Desafio desmarcado: ${challengeTitle}`;
+    void applyProfilePointsDelta(pointsDelta, reason);
+    pushNotification({
+      type: 'challenge',
+      title: becameCompleted ? 'Desafio concluido' : 'Desafio desmarcado',
+      description: becameCompleted
+        ? `${challengeTitle} somou +${pointsDelta} pts no CLA.`
+        : `${challengeTitle} removeu ${Math.abs(pointsDelta)} pts no CLA.`,
+    }, false);
   };
 
   const resetComposer = () => {
@@ -5536,7 +5650,28 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             </CardHeader>
             <CardContent className="space-y-4">
               {!socialState.clans.length && <p className="text-sm text-muted-foreground">Nenhum CLA criado.</p>}
-              {socialState.clans.map((clan) => (
+              {socialState.clans.map((clan) => {
+                const clanMemberPointMap = sanitizeClanMemberPoints(clan.memberPoints, clan.memberIds);
+                const clanScoreEntries = [
+                  {
+                    memberId: CLAN_SELF_MEMBER_KEY,
+                    memberName: profile.name?.trim() || 'Voce',
+                    points: clanMemberPointMap[CLAN_SELF_MEMBER_KEY] || 0,
+                    isSelf: true,
+                  },
+                  ...clan.memberIds.map((friendId) => ({
+                    memberId: friendId,
+                    memberName: friendsById.get(friendId)?.name || 'Integrante',
+                    points: clanMemberPointMap[friendId] || 0,
+                    isSelf: false,
+                  })),
+                ].sort((a, b) => {
+                  if (b.points !== a.points) return b.points - a.points;
+                  return a.memberName.localeCompare(b.memberName);
+                });
+                const clanTotalPoints = clanScoreEntries.reduce((total, entry) => total + entry.points, 0);
+
+                return (
                 <div key={clan.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -5559,6 +5694,36 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       if (!friend) return null;
                       return <Badge key={friend.id} variant="secondary">{friend.name}</Badge>;
                     })}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Pontuacao do CLA</p>
+                      <Badge variant={clanTotalPoints >= 0 ? 'default' : 'destructive'}>
+                        {clanTotalPoints} pts
+                      </Badge>
+                    </div>
+                    <div className="space-y-1">
+                      {clanScoreEntries.map((entry) => (
+                        <div
+                          key={`${clan.id}-${entry.memberId}`}
+                          className="flex items-center justify-between gap-2 rounded-md border border-border/70 p-2"
+                        >
+                          <p className="text-sm">
+                            {entry.memberName}
+                            {entry.isSelf ? ' (voce)' : ''}
+                          </p>
+                          <Badge variant={entry.isSelf ? 'default' : 'outline'}>
+                            {entry.points} pts
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                    {clan.scoreUpdatedAt && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Atualizado em {formatDateTime(clan.scoreUpdatedAt)}
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -5639,7 +5804,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     ))}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
         </TabsContent>
