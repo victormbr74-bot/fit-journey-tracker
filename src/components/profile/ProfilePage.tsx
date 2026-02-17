@@ -38,6 +38,7 @@ import {
 import { normalizeHandle, toHandle } from '@/lib/handleUtils';
 import { SocialFeedPost, SocialState, SocialStory } from '@/types/social';
 import { supabase } from '@/integrations/supabase/client';
+import { disableSocialGlobalState, isSocialGlobalStateAvailable } from '@/lib/socialSyncCapability';
 
 interface ProfileSocialInfo {
   phrase: string;
@@ -184,7 +185,6 @@ export function ProfilePage() {
   const profilePhotoInputRef = useRef<HTMLInputElement | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const storyInputRef = useRef<HTMLInputElement | null>(null);
-  const socialGlobalSyncAvailableRef = useRef(true);
 
   const profileHandle = useMemo(
     () => profile?.handle || toHandle(profile?.name || profile?.email || 'fit.user'),
@@ -216,10 +216,6 @@ export function ProfilePage() {
     setProfilePhotoDataUrl(socialInfo.profilePhotoDataUrl);
     setSocialMediaLoaded(true);
   }, [profile, socialHubStorageKey, socialProfileStorageKey]);
-
-  useEffect(() => {
-    socialGlobalSyncAvailableRef.current = true;
-  }, [profile?.id]);
 
   useEffect(() => {
     if (!profile) return;
@@ -342,7 +338,7 @@ export function ProfilePage() {
     nextPosts: SocialFeedPost[],
     nextStories: SocialStory[]
   ) => {
-    if (!socialGlobalSyncAvailableRef.current) return;
+    if (!isSocialGlobalStateAvailable()) return;
 
     try {
       const { data, error } = await supabase
@@ -353,7 +349,7 @@ export function ProfilePage() {
 
       if (error) {
         if (isMissingSocialGlobalStateError(error)) {
-          socialGlobalSyncAvailableRef.current = false;
+          disableSocialGlobalState();
           return;
         }
         console.error('Erro ao carregar snapshot social global no perfil:', error);
@@ -379,7 +375,7 @@ export function ProfilePage() {
 
       if (upsertError) {
         if (isMissingSocialGlobalStateError(upsertError)) {
-          socialGlobalSyncAvailableRef.current = false;
+          disableSocialGlobalState();
           return;
         }
         console.error('Erro ao salvar snapshot social global no perfil:', upsertError);

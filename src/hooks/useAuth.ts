@@ -1,4 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import {
+  createElement,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  ReactNode,
+} from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 
@@ -19,24 +28,78 @@ const mapUser = (supaUser: SupabaseUser | null): User | null => {
   };
 };
 
-export function useAuth() {
+type AuthContextValue = {
+  user: User | null;
+  loading: boolean;
+  signUp: (email: string, password: string, name: string, phone?: string) => Promise<{ data: User | null; error: Error | null }>;
+  signIn: (email: string, password: string) => Promise<{ data: User | null; error: Error | null }>;
+  signOut: () => Promise<{ error: Error | null }>;
+};
+
+type AuthProviderProps = {
+  children: ReactNode;
+};
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+const isInvalidRefreshTokenError = (
+  error: { message?: string; status?: number } | null | undefined
+) => {
+  if (!error) return false;
+  const message = (error.message || '').toLowerCase();
+  return (
+    message.includes('invalid refresh token') ||
+    message.includes('refresh token not found')
+  );
+};
+
+export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
       setUser(mapUser(session?.user ?? null));
       setLoading(false);
     });
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(mapUser(session?.user ?? null));
-      setLoading(false);
-    });
+    const restoreSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+
+        if (error) {
+          if (isInvalidRefreshTokenError(error)) {
+            await supabase.auth.signOut({ scope: 'local' });
+          } else {
+            console.error('Error restoring auth session:', error);
+          }
+
+          if (!active) return;
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+
+        if (!active) return;
+        setUser(mapUser(data.session?.user ?? null));
+        setLoading(false);
+      } catch (error) {
+        if (!active) return;
+        console.error('Unexpected auth error while restoring session:', error);
+        setUser(null);
+        setLoading(false);
+      }
+    };
+
+    void restoreSession();
 
     return () => {
+      active = false;
       subscription.unsubscribe();
     };
   }, []);
@@ -82,11 +145,21 @@ export function useAuth() {
     return { error };
   }, []);
 
-  return {
+  const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
     signUp,
     signIn,
     signOut,
-  };
+  }), [loading, signIn, signOut, signUp, user]);
+
+  return createElement(AuthContext.Provider, { value }, children);
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within AuthProvider');
+  }
+  return context;
 }

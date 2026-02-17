@@ -72,6 +72,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { disableSocialGlobalState, isSocialGlobalStateAvailable } from '@/lib/socialSyncCapability';
 
 interface SocialHubProps {
   profile: UserProfile;
@@ -516,7 +517,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SocialSection>(defaultSection);
   const [remoteSnapshotLoaded, setRemoteSnapshotLoaded] = useState(false);
-  const [remoteGlobalSyncEnabled, setRemoteGlobalSyncEnabled] = useState(true);
+  const [remoteGlobalSyncEnabled, setRemoteGlobalSyncEnabled] = useState(
+    isSocialGlobalStateAvailable()
+  );
 
   const [friendName, setFriendName] = useState('');
   const [friendHandle, setFriendHandle] = useState('');
@@ -606,7 +609,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   useEffect(() => {
     applyingRemoteSnapshotRef.current = false;
     lastGlobalSnapshotHashRef.current = '';
-    setRemoteGlobalSyncEnabled(true);
+    setRemoteGlobalSyncEnabled(isSocialGlobalStateAvailable());
     notifiedRemoteSyncUnavailableRef.current = false;
   }, [profile.id]);
 
@@ -832,6 +835,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
       if (error) {
         if (isMissingSocialGlobalStateError(error)) {
+          disableSocialGlobalState();
           setRemoteGlobalSyncEnabled(false);
           setRemoteSnapshotLoaded(true);
           return;
@@ -860,6 +864,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
         if (upsertError) {
           if (isMissingSocialGlobalStateError(upsertError)) {
+            disableSocialGlobalState();
             setRemoteGlobalSyncEnabled(false);
             setRemoteSnapshotLoaded(true);
             return;
@@ -947,6 +952,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
       if (error) {
         if (isMissingSocialGlobalStateError(error)) {
+          disableSocialGlobalState();
           setRemoteGlobalSyncEnabled(false);
           return;
         }

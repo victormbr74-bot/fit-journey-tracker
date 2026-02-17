@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Bot,
@@ -23,6 +23,7 @@ import { SOCIAL_HUB_STORAGE_PREFIX } from '@/lib/storageKeys';
 import { normalizeHandle } from '@/lib/handleUtils';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
+import { disableSocialGlobalState, isSocialGlobalStateAvailable } from '@/lib/socialSyncCapability';
 
 const primaryNavItems = [
   { path: '/dashboard', label: 'Inicio', icon: Home },
@@ -71,7 +72,6 @@ export function Sidebar() {
   const { profile } = useProfile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const remoteSocialStateAvailableRef = useRef(true);
 
   const userName = useMemo(
     () => profile?.name || user?.name || user?.email?.split('@')[0] || 'Usuario',
@@ -106,7 +106,7 @@ export function Sidebar() {
     }
 
     let pendingFriendRequests = 0;
-    if (remoteSocialStateAvailableRef.current) {
+    if (isSocialGlobalStateAvailable()) {
       try {
         const { data, error } = await supabase
           .from('social_global_state')
@@ -116,7 +116,7 @@ export function Sidebar() {
 
         if (error) {
           if (isMissingSocialGlobalStateError(error)) {
-            remoteSocialStateAvailableRef.current = false;
+            disableSocialGlobalState();
           } else {
             console.error('Erro ao consultar solicitacoes pendentes:', error);
           }
@@ -164,10 +164,6 @@ export function Sidebar() {
       window.removeEventListener('storage', onStorage);
     };
   }, [profile?.id, refreshUnreadCount]);
-
-  useEffect(() => {
-    remoteSocialStateAvailableRef.current = true;
-  }, [profile?.id]);
 
   const unreadCountLabel = unreadCount > 99 ? '99+' : String(unreadCount);
 
