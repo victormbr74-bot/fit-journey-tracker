@@ -3,10 +3,12 @@ export type SocialSection = 'search' | 'friends' | 'clans' | 'chat' | 'feed' | '
 
 export interface SocialFriend {
   id: string;
+  profileId?: string;
   name: string;
   handle: string;
   goal: string;
   addedAt: string;
+  avatarUrl?: string;
 }
 
 export interface SocialFriendRequest {

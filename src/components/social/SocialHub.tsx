@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   BellRing,
@@ -16,10 +16,8 @@ import {
   Loader2,
   Mic,
   MessageCircle,
-  MoreVertical,
   Paperclip,
   Pencil,
-  Phone,
   Plus,
   Search,
   Send,
@@ -32,7 +30,6 @@ import {
   UserMinus,
   UserPlus,
   Users,
-  Video,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -43,6 +40,7 @@ import {
   SOCIAL_GLOBAL_FEED_STORAGE_KEY,
   SOCIAL_GLOBAL_FRIEND_REQUESTS_STORAGE_KEY,
   SOCIAL_GLOBAL_STORIES_STORAGE_KEY,
+  SOCIAL_PROFILE_STORAGE_PREFIX,
   SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX,
   SOCIAL_SEEN_FRIEND_REQUESTS_STORAGE_PREFIX,
   SOCIAL_HUB_STORAGE_PREFIX,
@@ -592,20 +590,13 @@ const getInitials = (name: string) => {
   return `${words[0][0]}${words[1][0]}`.toUpperCase();
 };
 
-const CHAT_AVATAR_COLORS = [
-  '#607d8b',
-  '#6d4c41',
-  '#455a64',
-  '#4e6d7a',
-  '#5d6d7e',
-  '#546e7a',
-];
+const DEFAULT_CHAT_AVATAR = '/placeholder.svg';
 
 const CHAT_BACKGROUND_STYLE = {
-  backgroundColor: '#ece5dd',
+  backgroundColor: 'hsl(var(--background))',
   backgroundImage:
-    'radial-gradient(circle at 1px 1px, rgba(164,149,138,0.22) 1.2px, transparent 0)',
-  backgroundSize: '24px 24px',
+    'radial-gradient(circle at 1px 1px, hsl(var(--border) / 0.45) 1px, transparent 0)',
+  backgroundSize: '22px 22px',
 };
 
 const formatChatListTime = (isoDate: string) => {
@@ -644,15 +635,6 @@ const formatChatPreview = (message: SocialChatMessage | null) => {
   if (message.postId) return message.sender === 'me' ? 'Voce compartilhou um post' : 'Compartilhou um post';
   if (message.storyId) return message.sender === 'me' ? 'Voce compartilhou uma story' : 'Compartilhou uma story';
   return message.text.replace(/\s+/g, ' ').trim();
-};
-
-const getChatAvatarColor = (seed: string) => {
-  let hash = 0;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash = (hash << 5) - hash + seed.charCodeAt(index);
-    hash |= 0;
-  }
-  return CHAT_AVATAR_COLORS[Math.abs(hash) % CHAT_AVATAR_COLORS.length];
 };
 
 export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs = true }: SocialHubProps) {
@@ -729,6 +711,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [showChatListOnMobile, setShowChatListOnMobile] = useState(true);
   const [keepChatHistory, setKeepChatHistory] = useState(true);
   const [chatHistoryPreferenceLoaded, setChatHistoryPreferenceLoaded] = useState(false);
+  const [communityFriendsTab, setCommunityFriendsTab] = useState('search');
 
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [sharePostId, setSharePostId] = useState('');
@@ -922,6 +905,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     if (socialState.friends.length) return;
     setShowChatListOnMobile(true);
   }, [isMobile, socialState.friends.length]);
+
+  useEffect(() => {
+    if (activeSection !== 'friends') return;
+    setCommunityFriendsTab('search');
+  }, [activeSection]);
 
   useEffect(() => {
     applyingRemoteSnapshotRef.current = false;
@@ -1395,6 +1383,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                 id: typeof friend.id === 'string' && friend.id
                   ? friend.id
                   : `friend-legacy-${index}-${createId()}`,
+                profileId: typeof friend.profileId === 'string' && friend.profileId
+                  ? friend.profileId
+                  : undefined,
                 name: fallbackName,
                 handle: toHandle(friend.handle || fallbackName),
                 goal: typeof friend.goal === 'string' && friend.goal.trim()
@@ -1403,6 +1394,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                 addedAt: typeof friend.addedAt === 'string' && friend.addedAt
                   ? friend.addedAt
                   : new Date().toISOString(),
+                avatarUrl: typeof friend.avatarUrl === 'string' && friend.avatarUrl
+                  ? friend.avatarUrl
+                  : undefined,
               };
             })
         : [];
@@ -1957,12 +1951,26 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         const isSender = request.senderProfileId === profile.id;
         const rawFriendHandle = isSender ? request.receiverHandle : request.senderHandle;
         const normalizedFriendHandle = normalizeHandle(rawFriendHandle);
+        const friendProfileId = isSender ? request.receiverProfileId || undefined : request.senderProfileId;
 
         if (!normalizedFriendHandle || normalizedFriendHandle === normalizedProfileHandle) return;
-        if (knownHandles.has(normalizedFriendHandle)) return;
+        if (knownHandles.has(normalizedFriendHandle)) {
+          if (!friendProfileId) return;
+          const existingIndex = nextFriends.findIndex(
+            (friend) => normalizeHandle(friend.handle) === normalizedFriendHandle
+          );
+          if (existingIndex === -1) return;
+          if (nextFriends[existingIndex].profileId) return;
+          nextFriends[existingIndex] = {
+            ...nextFriends[existingIndex],
+            profileId: friendProfileId,
+          };
+          return;
+        }
 
         nextFriends.unshift({
           id: `friend-${request.id}-${isSender ? 'receiver' : 'sender'}`,
+          profileId: friendProfileId,
           name: isSender ? request.receiverName : request.senderName,
           handle: toHandle(normalizedFriendHandle),
           goal: isSender
@@ -2009,6 +2017,83 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     () => new Map(activeStories.map((story) => [story.id, story])),
     [activeStories]
   );
+
+  const friendAvatarUrlsByHandle = useMemo(() => {
+    const avatarCandidates = new Map<string, { imageDataUrl: string; createdAt: number }>();
+
+    activeStories.forEach((story) => {
+      const normalizedHandle = normalizeHandle(story.authorHandle || story.authorName);
+      if (!normalizedHandle || !story.imageDataUrl) return;
+      const createdAt = new Date(story.createdAt).getTime();
+      if (Number.isNaN(createdAt)) return;
+
+      const previous = avatarCandidates.get(normalizedHandle);
+      if (!previous || createdAt > previous.createdAt) {
+        avatarCandidates.set(normalizedHandle, { imageDataUrl: story.imageDataUrl, createdAt });
+      }
+    });
+
+    globalPosts.forEach((post) => {
+      const normalizedHandle = normalizeHandle(post.authorHandle || post.authorName);
+      if (!normalizedHandle || !post.imageDataUrl) return;
+      const createdAt = new Date(post.createdAt).getTime();
+      if (Number.isNaN(createdAt)) return;
+
+      const previous = avatarCandidates.get(normalizedHandle);
+      if (!previous || createdAt > previous.createdAt) {
+        avatarCandidates.set(normalizedHandle, { imageDataUrl: post.imageDataUrl, createdAt });
+      }
+    });
+
+    return new Map(
+      Array.from(avatarCandidates.entries()).map(([handle, value]) => [handle, value.imageDataUrl] as const)
+    );
+  }, [activeStories, globalPosts]);
+
+  const friendProfilePhotoUrlsByProfileId = useMemo(() => {
+    const entries = new Map<string, string>();
+    if (typeof window === 'undefined') return entries;
+
+    socialState.friends.forEach((friend) => {
+      if (!friend.profileId) return;
+      try {
+        const raw = window.localStorage.getItem(`${SOCIAL_PROFILE_STORAGE_PREFIX}${friend.profileId}`);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as { profilePhotoDataUrl?: unknown };
+        if (typeof parsed.profilePhotoDataUrl !== 'string') return;
+        const profilePhotoDataUrl = parsed.profilePhotoDataUrl.trim();
+        if (!profilePhotoDataUrl) return;
+        entries.set(friend.profileId, profilePhotoDataUrl);
+      } catch {
+        // Ignore malformed profile social storage values.
+      }
+    });
+
+    return entries;
+  }, [socialState.friends]);
+
+  const resolveFriendAvatarUrl = useCallback(
+    (friend: SocialFriend | null | undefined) => {
+      if (!friend) return DEFAULT_CHAT_AVATAR;
+      if (friend.avatarUrl?.trim()) return friend.avatarUrl;
+      if (friend.profileId && friendProfilePhotoUrlsByProfileId.has(friend.profileId)) {
+        return friendProfilePhotoUrlsByProfileId.get(friend.profileId) || DEFAULT_CHAT_AVATAR;
+      }
+
+      const normalizedHandle = normalizeHandle(friend.handle || friend.name);
+      if (!normalizedHandle) return DEFAULT_CHAT_AVATAR;
+
+      return friendAvatarUrlsByHandle.get(normalizedHandle) || DEFAULT_CHAT_AVATAR;
+    },
+    [friendAvatarUrlsByHandle, friendProfilePhotoUrlsByProfileId]
+  );
+
+  const handleAvatarImageError = (event: SyntheticEvent<HTMLImageElement>) => {
+    const image = event.currentTarget;
+    if (image.getAttribute('data-fallback') === 'true') return;
+    image.setAttribute('data-fallback', 'true');
+    image.src = DEFAULT_CHAT_AVATAR;
+  };
 
   const sharePost = useMemo(
     () => globalPosts.find((post) => post.id === sharePostId) ?? null,
@@ -2255,6 +2340,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         friendId = `friend-chat-${senderHandle || createId()}`;
         nextFriendsToAdd.push({
           id: friendId,
+          profileId: event.senderProfileId,
           name: event.senderName,
           handle: toHandle(senderHandle || event.senderHandle),
           goal: 'Sem meta definida',
@@ -3631,151 +3717,177 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         <TabsContent value="friends" className="space-y-4">
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle className="text-lg">Solicitacoes para seguir</CardTitle>
+              <CardTitle className="text-lg">Comunidade Sou Fit</CardTitle>
               <CardDescription>
-                Busque por @usuario e envie o pedido para seguir.
+                Pesquise por @usuario, veja quem voce ja segue e gerencie solicitacoes pendentes.
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-4 xl:grid-cols-2">
-              <form className="space-y-3" onSubmit={handleAddFriend}>
-                <div className="space-y-2">
-                  <Label htmlFor="friend-handle">Buscar por @usuario</Label>
-                  <Input
-                    id="friend-handle"
-                    value={friendHandle}
-                    onChange={handleFriendHandleChange}
-                    placeholder="@anafit"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Digite para ver sugestoes de perfis em tempo real.
-                  </p>
-                  {!!filteredDiscoverableProfiles.length && (
-                    <div className="max-h-40 overflow-y-auto rounded-lg border border-border/70 bg-card/50 p-1">
-                      {filteredDiscoverableProfiles.map((candidate) => (
-                        <button
-                          key={candidate.normalizedHandle}
-                          type="button"
-                          onClick={() => handleSelectDiscoverableProfile(candidate)}
-                          className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-secondary/60"
-                        >
-                          <span className="line-clamp-1 text-sm font-medium">{candidate.name}</span>
-                          <span className="text-xs text-muted-foreground">{candidate.handle}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="friend-name">Nome (opcional)</Label>
-                  <Input
-                    id="friend-name"
-                    value={friendName}
-                    onChange={(event) => setFriendName(event.target.value)}
-                    placeholder="Nome do perfil (opcional)"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="friend-goal">Objetivo do perfil</Label>
-                  <Input
-                    id="friend-goal"
-                    value={friendGoal}
-                    onChange={(event) => setFriendGoal(event.target.value)}
-                    placeholder="Ex: correr 5 km"
-                  />
-                </div>
-                <Button type="submit" variant="energy" className="w-full">
-                  <UserPlus className="h-4 w-4" />
-                  Enviar pedido para seguir
-                </Button>
-              </form>
+            <CardContent>
+              <Tabs value={communityFriendsTab} onValueChange={setCommunityFriendsTab} className="space-y-4">
+                <TabsList className="grid h-auto w-full grid-cols-3 gap-1">
+                  <TabsTrigger value="search" className="py-2 text-xs md:text-sm">
+                    <Search className="mr-1 h-4 w-4" />
+                    Pesquisar @
+                  </TabsTrigger>
+                  <TabsTrigger value="friends" className="py-2 text-xs md:text-sm">
+                    <Users className="mr-1 h-4 w-4" />
+                    Amigos
+                  </TabsTrigger>
+                  <TabsTrigger value="pending" className="py-2 text-xs md:text-sm">
+                    <BellRing className="mr-1 h-4 w-4" />
+                    Pendentes
+                  </TabsTrigger>
+                </TabsList>
 
-              <div className="space-y-3">
-                <h3 className="font-semibold">Pedidos recebidos</h3>
-                {!incomingFriendRequests.length && (
-                  <p className="text-sm text-muted-foreground">Nenhum pedido pendente.</p>
-                )}
-                {incomingFriendRequests.map((request) => (
-                  <div key={request.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
-                    <div>
-                      <p className="font-semibold">{request.senderName}</p>
-                      <p className="text-sm text-muted-foreground">{request.senderHandle}</p>
-                      <p className="text-xs text-muted-foreground mt-1">Meta: {request.senderGoal}</p>
+                <TabsContent value="search" className="space-y-3">
+                  <form className="space-y-3" onSubmit={handleAddFriend}>
+                    <div className="space-y-2">
+                      <Label htmlFor="community-friend-handle">Buscar por @usuario</Label>
+                      <Input
+                        id="community-friend-handle"
+                        value={friendHandle}
+                        onChange={handleFriendHandleChange}
+                        placeholder="@anafit"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Digite para ver sugestoes de perfis em tempo real.
+                      </p>
+                      {isSearchingProfiles && (
+                        <p className="text-xs text-muted-foreground">Buscando perfis...</p>
+                      )}
+                      {!!friendHandle.trim() && !isSearchingProfiles && !filteredDiscoverableProfiles.length && (
+                        <p className="text-xs text-muted-foreground">Nenhum perfil encontrado.</p>
+                      )}
+                      {!!filteredDiscoverableProfiles.length && (
+                        <div className="max-h-44 overflow-y-auto rounded-lg border border-border/70 bg-card/40 p-1">
+                          {filteredDiscoverableProfiles.map((candidate) => (
+                            <button
+                              key={candidate.normalizedHandle}
+                              type="button"
+                              onClick={() => handleSelectDiscoverableProfile(candidate)}
+                              className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-secondary/60"
+                            >
+                              <span className="line-clamp-1 text-sm font-medium">{candidate.name}</span>
+                              <span className="text-xs text-muted-foreground">{candidate.handle}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" size="sm" variant="outline" onClick={() => handleAcceptFriendRequest(request.id)}>
-                        <Check className="h-4 w-4" />
-                        Aceitar
-                      </Button>
-                      <Button type="button" size="sm" variant="outline" onClick={() => handleRejectFriendRequest(request.id)}>
-                        <X className="h-4 w-4" />
-                        Recusar
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
 
-          <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="text-lg">Rede de seguindo</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 xl:grid-cols-2">
-              <div className="space-y-2">
-                <h3 className="font-semibold">Perfis que voce segue</h3>
-                {!socialState.friends.length && (
-                  <p className="text-sm text-muted-foreground">Voce ainda nao segue ninguem.</p>
-                )}
-                {socialState.friends.map((friend) => (
-                  <div key={friend.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-semibold">{friend.name}</p>
-                        <p className="text-sm text-muted-foreground">{friend.handle}</p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="community-friend-name">Nome (opcional)</Label>
+                        <Input
+                          id="community-friend-name"
+                          value={friendName}
+                          onChange={(event) => setFriendName(event.target.value)}
+                          placeholder="Nome do perfil"
+                        />
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => handleRemoveFriend(friend.id)}
-                      >
-                        <UserMinus className="h-4 w-4" />
-                        Remover
-                      </Button>
+                      <div className="space-y-2">
+                        <Label htmlFor="community-friend-goal">Objetivo (opcional)</Label>
+                        <Input
+                          id="community-friend-goal"
+                          value={friendGoal}
+                          onChange={(event) => setFriendGoal(event.target.value)}
+                          placeholder="Ex: correr 5 km"
+                        />
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground">Meta: {friend.goal}</p>
-                  </div>
-                ))}
-              </div>
 
-              <div className="space-y-2">
-                <h3 className="font-semibold">Pedidos enviados</h3>
-                {!outgoingPendingFriendRequests.length && (
-                  <p className="text-sm text-muted-foreground">Nenhum pedido pendente.</p>
-                )}
-                {outgoingPendingFriendRequests.map((request) => (
-                  <div key={request.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
-                    <p className="font-semibold">{request.receiverName}</p>
-                    <p className="text-sm text-muted-foreground">{request.receiverHandle}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Enviado em {formatDateTime(request.createdAt)}</p>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleCancelOutgoingFriendRequest(request.id)}
-                    >
-                      <X className="h-4 w-4" />
-                      Cancelar solicitacao
+                    <Button type="submit" variant="energy" className="w-full sm:w-auto">
+                      <UserPlus className="h-4 w-4" />
+                      Enviar pedido para seguir
                     </Button>
+                  </form>
+                </TabsContent>
+
+                <TabsContent value="friends" className="space-y-3">
+                  {!socialState.friends.length && (
+                    <p className="text-sm text-muted-foreground">Voce ainda nao segue ninguem.</p>
+                  )}
+                  <div className="space-y-2">
+                    {socialState.friends.map((friend) => (
+                      <div key={friend.id} className="rounded-lg border border-border/70 bg-card/40 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="line-clamp-1 font-semibold">{friend.name}</p>
+                            <p className="line-clamp-1 text-sm text-muted-foreground">{friend.handle}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">Meta: {friend.goal}</p>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => handleRemoveFriend(friend.id)}
+                          >
+                            <UserMinus className="h-4 w-4" />
+                            Remover
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </TabsContent>
+
+                <TabsContent value="pending" className="grid gap-4 xl:grid-cols-2">
+                  <div className="space-y-3">
+                    <h3 className="font-semibold">Solicitacoes recebidas</h3>
+                    {!incomingFriendRequests.length && (
+                      <p className="text-sm text-muted-foreground">Nenhuma solicitacao aguardando aprovacao.</p>
+                    )}
+                    {incomingFriendRequests.map((request) => (
+                      <div key={request.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
+                        <div>
+                          <p className="font-semibold">{request.senderName}</p>
+                          <p className="text-sm text-muted-foreground">{request.senderHandle}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">Meta: {request.senderGoal}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" size="sm" variant="outline" onClick={() => handleAcceptFriendRequest(request.id)}>
+                            <Check className="h-4 w-4" />
+                            Aceitar
+                          </Button>
+                          <Button type="button" size="sm" variant="outline" onClick={() => handleRejectFriendRequest(request.id)}>
+                            <X className="h-4 w-4" />
+                            Recusar
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className="font-semibold">Solicitacoes enviadas</h3>
+                    {!outgoingPendingFriendRequests.length && (
+                      <p className="text-sm text-muted-foreground">Nenhuma solicitacao pendente.</p>
+                    )}
+                    {outgoingPendingFriendRequests.map((request) => (
+                      <div key={request.id} className="rounded-lg border border-border/70 bg-card/40 p-3 space-y-3">
+                        <div>
+                          <p className="font-semibold">{request.receiverName}</p>
+                          <p className="text-sm text-muted-foreground">{request.receiverHandle}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">Enviado em {formatDateTime(request.createdAt)}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleCancelOutgoingFriendRequest(request.id)}
+                        >
+                          <X className="h-4 w-4" />
+                          Cancelar solicitacao
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
         </TabsContent>
-
         <TabsContent value="clans" className="space-y-4">
           <Card className="glass-card">
             <CardHeader>
@@ -3928,24 +4040,27 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         </TabsContent>
 
         <TabsContent value="chat" className="space-y-4">
-          <Card className="overflow-hidden border-border/70 bg-[#111b21] shadow-xl">
+          <Card className="glass-card overflow-hidden border-border/70">
             <CardContent className="p-0">
               <div className="grid min-h-[680px] md:grid-cols-[340px,1fr]">
                 <section
                   className={cn(
-                    'flex flex-col bg-[#111b21] text-white md:border-r md:border-white/10',
+                    'flex flex-col border-r border-border/70 bg-card',
                     !isMobile ? 'md:flex' : showChatListOnMobile ? 'flex' : 'hidden md:flex'
                   )}
                 >
-                  <header className="bg-[#075e54] px-4 py-3">
+                  <header className="border-b border-border/70 bg-secondary/75 px-4 py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-xl font-semibold">FitChat</p>
+                      <div>
+                        <p className="text-lg font-semibold">FitChat</p>
+                        <p className="text-xs text-muted-foreground">Converse com seus contatos da comunidade.</p>
+                      </div>
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
                           onClick={handleImportDeviceContacts}
                           disabled={isImportingContacts || !contactPickerSupported}
-                          className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded-full p-2 text-muted-foreground transition hover:bg-background/70 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                           title="Importar contatos do celular"
                         >
                           {isImportingContacts ? (
@@ -3958,47 +4073,40 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                           type="button"
                           onClick={() => handleStartChat()}
                           disabled={!socialState.friends.length}
-                          className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded-full p-2 text-muted-foreground transition hover:bg-background/70 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                           title="Iniciar chat"
                         >
                           <MessageCircle className="h-4 w-4" />
                         </button>
                       </div>
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-[11px] font-medium uppercase tracking-wide text-emerald-50/75">
-                      <span className="border-b-2 border-[#25d366] pb-1 text-[#25d366]">Conversas</span>
-                      <span className="opacity-70">Status</span>
-                      <span className="opacity-70">Chamadas</span>
-                    </div>
                   </header>
 
-                  <div className="border-b border-white/10 px-3 py-2">
+                  <div className="space-y-2 border-b border-border/70 px-3 py-2">
                     <div className="relative">
-                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8696a0]" />
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         value={chatFriendSearch}
                         onChange={(event) => setChatFriendSearch(event.target.value)}
                         placeholder="Pesquisar contato"
-                        className="h-9 rounded-full border-0 bg-[#202c33] pl-9 text-sm text-white placeholder:text-[#8696a0] focus-visible:ring-1 focus-visible:ring-[#25d366]"
+                        className="h-9 rounded-full border-border/70 bg-background/70 pl-9"
                       />
                     </div>
                     {!contactPickerSupported && (
-                      <p className="mt-2 text-[11px] text-[#8696a0]">
+                      <p className="text-[11px] text-muted-foreground">
                         Seu navegador nao permite ler contatos do celular.
                       </p>
                     )}
                     {importedContactsCount > 0 && (
-                      <p className="mt-2 text-[11px] text-[#25d366]">
+                      <p className="text-[11px] text-primary">
                         {importedContactsCount} contato(s) valido(s) analisado(s).
                       </p>
                     )}
                   </div>
 
                   {!!matchedPhoneContacts.length && (
-                    <div className="border-b border-white/10 px-3 py-2">
-                      <p className="text-[11px] font-medium text-[#25d366]">
-                        Contatos encontrados no SouFit
-                      </p>
+                    <div className="border-b border-border/70 px-3 py-2">
+                      <p className="text-[11px] font-medium text-primary">Contatos encontrados no SouFit</p>
                       <div className="mt-2 space-y-1.5">
                         {matchedPhoneContacts.slice(0, 3).map((match) => {
                           const normalizedHandle = match.profile.normalizedHandle;
@@ -4011,31 +4119,31 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                           return (
                             <div
                               key={match.id}
-                              className="flex items-center justify-between gap-2 rounded-lg bg-[#182229] px-2 py-1.5"
+                              className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/50 px-2 py-1.5"
                             >
                               <div className="min-w-0">
-                                <p className="line-clamp-1 text-xs font-medium text-white">{match.contactName}</p>
-                                <p className="line-clamp-1 text-[11px] text-[#8696a0]">{match.profile.handle}</p>
+                                <p className="line-clamp-1 text-xs font-medium">{match.contactName}</p>
+                                <p className="line-clamp-1 text-[11px] text-muted-foreground">{match.profile.handle}</p>
                               </div>
                               {alreadyFollowing && followedFriend ? (
                                 <button
                                   type="button"
                                   onClick={() => startChatWithFriend(followedFriend.id)}
-                                  className="rounded-full bg-[#25d366] px-2 py-1 text-[11px] font-medium text-[#111b21]"
+                                  className="rounded-full bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground"
                                 >
                                   Abrir
                                 </button>
                               ) : hasOutgoingRequest ? (
-                                <span className="text-[11px] text-[#8696a0]">Pendente</span>
+                                <span className="text-[11px] text-muted-foreground">Pendente</span>
                               ) : hasIncomingRequest ? (
-                                <span className="text-[11px] text-[#8696a0]">Aceite pedido</span>
+                                <span className="text-[11px] text-muted-foreground">Aceite pedido</span>
                               ) : isMyOwnProfile ? (
-                                <span className="text-[11px] text-[#8696a0]">Voce</span>
+                                <span className="text-[11px] text-muted-foreground">Voce</span>
                               ) : (
                                 <button
                                   type="button"
                                   onClick={() => handleFollowMatchedContact(match)}
-                                  className="rounded-full border border-[#25d366] px-2 py-1 text-[11px] font-medium text-[#25d366]"
+                                  className="rounded-full border border-primary/60 px-2 py-1 text-[11px] font-medium text-primary"
                                 >
                                   Seguir
                                 </button>
@@ -4049,12 +4157,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
                   <div className="flex-1 overflow-y-auto">
                     {!socialState.friends.length && (
-                      <p className="px-4 py-4 text-sm text-[#8696a0]">
+                      <p className="px-4 py-4 text-sm text-muted-foreground">
                         Siga perfis para iniciar o FitChat.
                       </p>
                     )}
                     {!!socialState.friends.length && !chatFriendConversations.length && (
-                      <p className="px-4 py-4 text-sm text-[#8696a0]">
+                      <p className="px-4 py-4 text-sm text-muted-foreground">
                         Nenhum contato encontrado com essa busca.
                       </p>
                     )}
@@ -4064,7 +4172,6 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       const preview = formatChatPreview(lastMessage);
                       const lastTime = lastMessage ? formatChatListTime(lastMessage.createdAt) : '';
                       const highlightRow = isPending || isActive;
-                      const avatarColor = getChatAvatarColor(friend.id || friend.handle || friend.name);
 
                       return (
                         <button
@@ -4073,26 +4180,26 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                           onClick={() => startChatWithFriend(friend.id)}
                           className={cn(
                             'flex w-full items-start gap-3 px-3 py-2 text-left transition',
-                            highlightRow ? 'bg-[#2a3942]' : 'hover:bg-[#202c33]'
+                            highlightRow ? 'bg-primary/10' : 'hover:bg-secondary/60'
                           )}
                         >
-                          <div
-                            className="mt-1 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
-                            style={{ backgroundColor: avatarColor }}
-                          >
-                            {getInitials(friend.name)}
-                          </div>
-                          <div className="min-w-0 flex-1 border-b border-white/5 pb-2.5">
+                          <img
+                            src={resolveFriendAvatarUrl(friend)}
+                            alt={`Foto de ${friend.name}`}
+                            className="mt-1 h-12 w-12 shrink-0 rounded-full border border-border/70 object-cover bg-secondary"
+                            onError={handleAvatarImageError}
+                          />
+                          <div className="min-w-0 flex-1 border-b border-border/50 pb-2.5">
                             <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-1 text-sm font-semibold text-white">{friend.name}</p>
-                              <span className={cn('shrink-0 text-[11px]', unreadCount ? 'text-[#25d366]' : 'text-[#8696a0]')}>
+                              <p className="line-clamp-1 text-sm font-semibold">{friend.name}</p>
+                              <span className={cn('shrink-0 text-[11px]', unreadCount ? 'text-primary' : 'text-muted-foreground')}>
                                 {lastTime}
                               </span>
                             </div>
                             <div className="mt-1 flex items-center justify-between gap-2">
-                              <p className="line-clamp-1 text-xs text-[#9caab3]">{preview}</p>
+                              <p className="line-clamp-1 text-xs text-muted-foreground">{preview}</p>
                               {unreadCount > 0 && (
-                                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#25d366] px-1 text-[11px] font-semibold text-[#111b21]">
+                                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-primary-foreground">
                                   {unreadCount > 99 ? '99+' : unreadCount}
                                 </span>
                               )}
@@ -4103,9 +4210,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     })}
                   </div>
 
-                  <div className="space-y-2 border-t border-white/10 bg-[#182229] px-3 py-2">
+                  <div className="space-y-2 border-t border-border/70 bg-secondary/45 px-3 py-2">
                     <div className="flex items-center justify-between gap-2">
-                      <Label htmlFor="fit-chat-history" className="text-xs text-[#d1d7db]">
+                      <Label htmlFor="fit-chat-history" className="text-xs text-muted-foreground">
                         Manter historico local
                       </Label>
                       <Switch
@@ -4119,7 +4226,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                         type="button"
                         onClick={handleClearActiveConversation}
                         disabled={!activeChatFriendId}
-                        className="rounded-full border border-white/20 px-3 py-1 text-[11px] text-[#d1d7db] disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded-full border border-border/80 bg-card/70 px-3 py-1 text-[11px] text-muted-foreground disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Apagar conversa
                       </button>
@@ -4127,7 +4234,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                         type="button"
                         onClick={handleClearAllChatHistory}
                         disabled={!socialState.chatMessages.length}
-                        className="rounded-full border border-white/20 px-3 py-1 text-[11px] text-[#d1d7db] disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded-full border border-border/80 bg-card/70 px-3 py-1 text-[11px] text-muted-foreground disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Limpar tudo
                       </button>
@@ -4137,56 +4244,31 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
                 <section
                   className={cn(
-                    'flex flex-col',
+                    'flex flex-col bg-card',
                     !isMobile ? 'md:flex' : showChatListOnMobile ? 'hidden md:flex' : 'flex'
                   )}
                 >
                   {!!socialState.friends.length && activeChatFriend ? (
                     <>
-                      <div className="flex items-center justify-between bg-[#075e54] px-3 py-2.5 text-white">
-                        <div className="flex items-center gap-2.5">
-                          {isMobile && (
-                            <button
-                              type="button"
-                              onClick={() => setShowChatListOnMobile(true)}
-                              className="rounded-full p-1.5 text-white hover:bg-white/15"
-                            >
-                              <ArrowLeft className="h-4 w-4" />
-                            </button>
-                          )}
-                          <div
-                            className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold text-white"
-                            style={{ backgroundColor: getChatAvatarColor(activeChatFriend.id || activeChatFriend.handle) }}
-                          >
-                            {getInitials(activeChatFriend.name)}
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold leading-none">{activeChatFriend.name}</p>
-                            <p className="mt-1 text-[11px] text-emerald-50/80">{activeChatFriend.handle}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-2.5 border-b border-border/70 bg-secondary/75 px-3 py-2.5">
+                        {isMobile && (
                           <button
                             type="button"
-                            className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15"
-                            title="Ligar"
+                            onClick={() => setShowChatListOnMobile(true)}
+                            className="rounded-full p-1.5 text-muted-foreground hover:bg-background/70 hover:text-foreground"
                           >
-                            <Phone className="h-4 w-4" />
+                            <ArrowLeft className="h-4 w-4" />
                           </button>
-                          <button
-                            type="button"
-                            className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15"
-                            title="Videochamada"
-                          >
-                            <Video className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-full p-2 text-emerald-50 transition hover:bg-white/15"
-                            title="Mais opcoes"
-                          >
-                            <MoreVertical className="h-4 w-4" />
-                          </button>
+                        )}
+                        <img
+                          src={resolveFriendAvatarUrl(activeChatFriend)}
+                          alt={`Foto de ${activeChatFriend.name}`}
+                          className="h-10 w-10 rounded-full border border-border/70 object-cover bg-secondary"
+                          onError={handleAvatarImageError}
+                        />
+                        <div>
+                          <p className="text-sm font-semibold leading-none">{activeChatFriend.name}</p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">{activeChatFriend.handle}</p>
                         </div>
                       </div>
 
@@ -4196,11 +4278,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                         style={CHAT_BACKGROUND_STYLE}
                       >
                         {!!activeChatMessages.length && (
-                          <div className="mx-auto mb-3 w-fit rounded-full bg-[#d9eef8] px-3 py-1 text-[10px] font-semibold tracking-wide text-[#4d6572]">
+                          <div className="mx-auto mb-3 w-fit rounded-full border border-border/70 bg-card/90 px-3 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground">
                             {activeChatDayLabel}
                           </div>
                         )}
-                        <div className="mx-auto mb-3 flex w-full max-w-[720px] items-start gap-2 rounded-md bg-[#fff3c4] px-3 py-2 text-[11px] text-[#6a5d31] shadow-sm">
+                        <div className="mx-auto mb-3 flex w-full max-w-[720px] items-start gap-2 rounded-md border border-border/70 bg-card/85 px-3 py-2 text-[11px] text-muted-foreground shadow-sm">
                           <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                           <p>
                             As mensagens e chamadas desta conversa sao protegidas com criptografia de ponta a ponta.
@@ -4208,7 +4290,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                         </div>
 
                         {!activeChatMessages.length && (
-                          <p className="px-1 text-sm text-[#667781]">Nenhuma mensagem ainda.</p>
+                          <p className="px-1 text-sm text-muted-foreground">Nenhuma mensagem ainda.</p>
                         )}
 
                         <div className="space-y-1.5">
@@ -4225,36 +4307,36 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                   className={cn(
                                     'max-w-[85%] rounded-xl px-3 py-2 shadow-sm md:max-w-[72%]',
                                     isMine
-                                      ? 'rounded-br-sm bg-[#dcf8c6] text-[#111b21]'
-                                      : 'rounded-bl-sm bg-white text-[#111b21]'
+                                      ? 'rounded-br-sm border border-primary/35 bg-primary/15 text-foreground'
+                                      : 'rounded-bl-sm border border-border/70 bg-card text-foreground'
                                   )}
                                 >
                                   <p className="whitespace-pre-wrap break-words text-sm">{message.text}</p>
                                   {sharedPost && (
-                                    <div className="mt-2 rounded-md border border-[#d0d7dd] bg-[#f7f9fb] p-2">
+                                    <div className="mt-2 rounded-md border border-border/70 bg-background/65 p-2">
                                       <img
                                         src={sharedPost.imageDataUrl}
                                         alt={`Post de ${sharedPost.authorName}`}
                                         className="h-24 w-full rounded-md object-cover"
                                       />
-                                      <p className="mt-1 line-clamp-2 text-xs text-[#52656f]">{sharedPost.caption}</p>
+                                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{sharedPost.caption}</p>
                                     </div>
                                   )}
                                   {!sharedPost && sharedStory && (
-                                    <div className="mt-2 rounded-md border border-[#d0d7dd] bg-[#f7f9fb] p-2">
+                                    <div className="mt-2 rounded-md border border-border/70 bg-background/65 p-2">
                                       <img
                                         src={sharedStory.imageDataUrl}
                                         alt={`Story de ${sharedStory.authorName}`}
                                         className="h-24 w-full rounded-md object-cover"
                                       />
-                                      <p className="mt-1 line-clamp-2 text-xs text-[#52656f]">
+                                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                                         Story: {sharedStory.caption || 'Sem legenda'}
                                       </p>
                                     </div>
                                   )}
-                                  <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-[#667781]">
+                                  <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
                                     <span>{formatTime(message.createdAt)}</span>
-                                    {isMine && <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb]" />}
+                                    {isMine && <CheckCheck className="h-3.5 w-3.5 text-primary" />}
                                   </div>
                                 </div>
                               </div>
@@ -4263,12 +4345,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                         </div>
                       </div>
 
-                      <div className="border-t border-[#d7d2ca] bg-[#f0efef] px-2 py-2 md:px-3">
+                      <div className="border-t border-border/70 bg-card/95 px-2 py-2 md:px-3">
                         <form className="flex items-center gap-2" onSubmit={handleSendChatMessage}>
-                          <div className="flex h-11 flex-1 items-center rounded-full bg-white px-2 shadow-sm">
+                          <div className="flex h-11 flex-1 items-center rounded-full border border-border/80 bg-background/80 px-2 shadow-sm">
                             <button
                               type="button"
-                              className="rounded-full p-2 text-[#8696a0] transition hover:bg-[#f1f2f3]"
+                              className="rounded-full p-2 text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground"
                               title="Emoji"
                             >
                               <Smile className="h-5 w-5" />
@@ -4277,27 +4359,24 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                               value={chatInput}
                               onChange={(event) => setChatInput(event.target.value)}
                               placeholder="Digite aqui..."
-                              className="h-auto border-0 bg-transparent px-1 text-sm text-[#111b21] placeholder:text-[#8696a0] focus-visible:ring-0"
+                              className="h-auto border-0 bg-transparent px-1 text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-0"
                             />
                             <button
                               type="button"
-                              className="rounded-full p-2 text-[#8696a0] transition hover:bg-[#f1f2f3]"
+                              className="rounded-full p-2 text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground"
                               title="Anexar"
                             >
                               <Paperclip className="h-4.5 w-4.5" />
                             </button>
                             <button
                               type="button"
-                              className="rounded-full p-2 text-[#8696a0] transition hover:bg-[#f1f2f3]"
+                              className="rounded-full p-2 text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground"
                               title="Camera"
                             >
                               <Camera className="h-4.5 w-4.5" />
                             </button>
                           </div>
-                          <Button
-                            type="submit"
-                            className="h-11 w-11 rounded-full bg-[#25d366] p-0 text-[#111b21] hover:bg-[#21bd5b]"
-                          >
+                          <Button type="submit" className="h-11 w-11 rounded-full p-0">
                             {chatInput.trim() ? (
                               <Send className="h-4 w-4" />
                             ) : (
@@ -4309,7 +4388,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       </div>
                     </>
                   ) : (
-                    <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-[#667781]" style={CHAT_BACKGROUND_STYLE}>
+                    <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground" style={CHAT_BACKGROUND_STYLE}>
                       Escolha um contato para iniciar uma conversa no FitChat.
                     </div>
                   )}
