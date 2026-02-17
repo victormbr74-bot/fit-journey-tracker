@@ -41,7 +41,8 @@ export function ChallengesSection() {
       if (cycleKey === lastAssignmentCycle) return;
 
       try {
-        await assignDailyChallenges();
+        const assigned = await assignDailyChallenges();
+        if (!assigned) return;
       } catch (error) {
         console.error('Erro ao sincronizar desafios recorrentes:', error);
         return;

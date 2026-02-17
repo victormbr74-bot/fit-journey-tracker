@@ -37,7 +37,7 @@ type ProfileContextValue = {
   ) => Promise<{ handle?: string; error?: Error | null }>;
   addWeightEntry: (weight: number) => Promise<{ error?: Error | null }>;
   addRunSession: (session: Omit<RunSession, 'id' | 'user_id' | 'recorded_at'>) => Promise<{ error?: Error | null }>;
-  assignDailyChallenges: () => Promise<void>;
+  assignDailyChallenges: () => Promise<boolean>;
   completeChallenge: (challengeProgressId: string) => Promise<{ error?: Error | null }>;
   updateChallengeProgress: (challengeProgressId: string, value: number) => Promise<{ error?: Error | null }>;
   refetch: {
@@ -89,6 +89,22 @@ const isHandleConflictError = (
   if (error.code !== '23505') return false;
   const combinedText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
   return combinedText.includes('handle') || combinedText.includes('profiles_handle_unique');
+};
+
+const isMissingOnConflictConstraintError = (
+  error: { code?: string; message?: string; details?: string } | null | undefined
+) => {
+  if (!error) return false;
+  if (error.code === '42P10') return true;
+  const combinedText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
+  return combinedText.includes('no unique or exclusion constraint matching the on conflict specification');
+};
+
+const isUniqueViolationError = (
+  error: { code?: string; message?: string; details?: string } | null | undefined
+) => {
+  if (!error) return false;
+  return error.code === '23505';
 };
 
 const BACKEND_CAPABILITIES_STORAGE_KEY = 'fit-journey.backend-capabilities';
@@ -632,8 +648,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     return activeCycle;
   }, [user]);
 
-  const assignDailyChallenges = useCallback(async (): Promise<void> => {
-    if (!user) return;
+  const assignDailyChallenges = useCallback(async (): Promise<boolean> => {
+    if (!user) return false;
 
     try {
       const now = new Date();
@@ -647,7 +663,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
       if (activeChallengesError) {
         console.error('Error loading active challenges for assignment:', activeChallengesError);
-        return;
+        return false;
       }
 
       const { data: progressRows, error: progressError } = await supabase
@@ -657,7 +673,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
       if (progressError) {
         console.error('Error loading user challenge progress for assignment:', progressError);
-        return;
+        return false;
       }
 
       const progressChallengeIds = Array.from(
@@ -678,7 +694,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
         if (challengeMetadataError) {
           console.error('Error loading challenge metadata for assignments:', challengeMetadataError);
-          return;
+          return false;
         }
 
         (challengeMetadataRows || []).forEach((row) => {
@@ -721,7 +737,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
           .in('id', expiredIds);
         if (deleteExpiredError) {
           console.error('Error removing expired challenge cycles:', deleteExpiredError);
-          return;
+          return false;
         }
       }
 
@@ -740,7 +756,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
             .single();
           if (penaltyError) {
             console.error('Error applying challenge penalty points:', penaltyError);
-            return;
+            return false;
           }
           if (updatedProfile) {
             setProfile((previous) => {
@@ -813,14 +829,26 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
           .from('user_challenge_progress')
           .upsert(inserts, { onConflict: 'user_id,challenge_id,assigned_date', ignoreDuplicates: true });
         if (insertError) {
-          console.error('Error assigning recurring challenge cycles:', insertError);
-          return;
+          if (isMissingOnConflictConstraintError(insertError)) {
+            const { error: fallbackInsertError } = await supabase
+              .from('user_challenge_progress')
+              .insert(inserts);
+            if (fallbackInsertError && !isUniqueViolationError(fallbackInsertError)) {
+              console.error('Error assigning recurring challenge cycles (fallback insert):', fallbackInsertError);
+              return false;
+            }
+          } else {
+            console.error('Error assigning recurring challenge cycles:', insertError);
+            return false;
+          }
         }
       }
 
       await fetchUserChallenges();
+      return true;
     } catch (assignChallengesError) {
       console.error('Unexpected error assigning recurring challenges:', assignChallengesError);
+      return false;
     }
   }, [user, profile, fetchProfile, fetchUserChallenges]);
 
