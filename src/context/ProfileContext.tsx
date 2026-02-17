@@ -560,12 +560,13 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       current_value: entry.current_value || 0,
       is_completed: entry.is_completed || false,
       completed_at: entry.completed_at || undefined,
-      assigned_date: entry.assigned_date,
+      assigned_date: typeof entry.assigned_date === 'string' ? entry.assigned_date.slice(0, 10) : today,
       challenge: entry.challenges ? {
-        id: entry.challenges.id,
-        name: entry.challenges.name,
+        id: entry.challenges.id || entry.challenge_id,
+        name: entry.challenges.name || 'Desafio',
         description: entry.challenges.description || '',
-        challenge_type: entry.challenges.challenge_type as 'daily' | 'weekly',
+        challenge_type:
+          (entry.challenges.challenge_type === 'weekly' ? 'weekly' : 'daily') as 'daily' | 'weekly',
         points_awarded: entry.challenges.points_awarded || 10,
         points_deducted: entry.challenges.points_deducted || 5,
         icon: entry.challenges.icon || '🏆',
@@ -591,7 +592,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         if (a.challenge.challenge_type !== b.challenge.challenge_type) {
           return a.challenge.challenge_type === 'daily' ? -1 : 1;
         }
-        return a.challenge.name.localeCompare(b.challenge.name);
+        return (a.challenge.name || '').localeCompare(b.challenge.name || '');
       });
 
     setUserChallenges(activeCycle);
@@ -601,126 +602,134 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   const assignDailyChallenges = useCallback(async (): Promise<void> => {
     if (!user) return;
 
-    const now = new Date();
-    const today = toIsoDate(now);
-    const weekStart = getWeekStartIsoDate(now);
+    try {
+      const now = new Date();
+      const today = toIsoDate(now);
+      const weekStart = getWeekStartIsoDate(now);
 
-    const { data: activeChallenges, error: activeChallengesError } = await supabase
-      .from('challenges')
-      .select('id, challenge_type')
-      .eq('is_active', true);
+      const { data: activeChallenges, error: activeChallengesError } = await supabase
+        .from('challenges')
+        .select('id, challenge_type')
+        .eq('is_active', true);
 
-    if (activeChallengesError) {
-      console.error('Error loading active challenges for assignment:', activeChallengesError);
-      return;
-    }
+      if (activeChallengesError) {
+        console.error('Error loading active challenges for assignment:', activeChallengesError);
+        return;
+      }
 
-    const { data: expiredDailyRows, error: expiredDailyError } = await supabase
-      .from('user_challenge_progress')
-      .select('id, is_completed, challenges!inner(points_deducted, challenge_type)')
-      .eq('user_id', user.id)
-      .lt('assigned_date', today)
-      .eq('challenges.challenge_type', 'daily');
+      const { data: expiredDailyRows, error: expiredDailyError } = await supabase
+        .from('user_challenge_progress')
+        .select('id, is_completed, challenges!inner(points_deducted, challenge_type)')
+        .eq('user_id', user.id)
+        .lt('assigned_date', today)
+        .eq('challenges.challenge_type', 'daily');
 
-    const { data: expiredWeeklyRows, error: expiredWeeklyError } = await supabase
-      .from('user_challenge_progress')
-      .select('id, is_completed, challenges!inner(points_deducted, challenge_type)')
-      .eq('user_id', user.id)
-      .lt('assigned_date', weekStart)
-      .eq('challenges.challenge_type', 'weekly');
+      const { data: expiredWeeklyRows, error: expiredWeeklyError } = await supabase
+        .from('user_challenge_progress')
+        .select('id, is_completed, challenges!inner(points_deducted, challenge_type)')
+        .eq('user_id', user.id)
+        .lt('assigned_date', weekStart)
+        .eq('challenges.challenge_type', 'weekly');
 
-    if (expiredDailyError || expiredWeeklyError) {
-      console.error('Error loading expired challenge cycles:', expiredDailyError || expiredWeeklyError);
-      return;
-    }
+      if (expiredDailyError || expiredWeeklyError) {
+        console.error('Error loading expired challenge cycles:', expiredDailyError || expiredWeeklyError);
+        return;
+      }
 
-    const expiredRows = [...(expiredDailyRows || []), ...(expiredWeeklyRows || [])];
-    const penaltyPoints = expiredRows.reduce((total, row) => {
-      if (row.is_completed) return total;
-      const challengeData = Array.isArray(row.challenges) ? row.challenges[0] : row.challenges;
-      const pointsDeducted = Number(challengeData?.points_deducted) || 0;
-      return total + Math.max(0, pointsDeducted);
-    }, 0);
+      const expiredRows = [...(expiredDailyRows || []), ...(expiredWeeklyRows || [])];
+      const penaltyPoints = expiredRows.reduce((total, row) => {
+        if (row.is_completed) return total;
+        const challengeData = Array.isArray(row.challenges) ? row.challenges[0] : row.challenges;
+        const pointsDeducted = Number(challengeData?.points_deducted) || 0;
+        return total + Math.max(0, pointsDeducted);
+      }, 0);
 
-    if (penaltyPoints > 0) {
-      const profileForPenalty = profile || await fetchProfile();
-      if (profileForPenalty) {
-        const nextPoints = Math.max(0, (profileForPenalty.points || 0) - penaltyPoints);
-        const { error: penaltyError } = await updateProfile({ points: nextPoints });
-        if (penaltyError) {
-          console.error('Error applying challenge penalty points:', penaltyError);
+      if (penaltyPoints > 0) {
+        const profileForPenalty = profile || await fetchProfile();
+        if (profileForPenalty) {
+          const nextPoints = Math.max(0, (profileForPenalty.points || 0) - penaltyPoints);
+          const { error: penaltyError } = await updateProfile({ points: nextPoints });
+          if (penaltyError) {
+            console.error('Error applying challenge penalty points:', penaltyError);
+            return;
+          }
+        }
+      }
+
+      const expiredIds = expiredRows
+        .map((row) => row.id)
+        .filter((id): id is string => typeof id === 'string' && Boolean(id));
+      if (expiredIds.length) {
+        const { error: deleteExpiredError } = await supabase
+          .from('user_challenge_progress')
+          .delete()
+          .in('id', expiredIds);
+        if (deleteExpiredError) {
+          console.error('Error removing expired challenge cycles:', deleteExpiredError);
           return;
         }
       }
-    }
 
-    const expiredIds = expiredRows
-      .map((row) => row.id)
-      .filter((id): id is string => typeof id === 'string' && Boolean(id));
-    if (expiredIds.length) {
-      const { error: deleteExpiredError } = await supabase
+      const { data: currentDailyRows, error: currentDailyError } = await supabase
         .from('user_challenge_progress')
-        .delete()
-        .in('id', expiredIds);
-      if (deleteExpiredError) {
-        console.error('Error removing expired challenge cycles:', deleteExpiredError);
+        .select('challenge_id, challenges!inner(challenge_type)')
+        .eq('user_id', user.id)
+        .eq('assigned_date', today)
+        .eq('challenges.challenge_type', 'daily');
+      const { data: currentWeeklyRows, error: currentWeeklyError } = await supabase
+        .from('user_challenge_progress')
+        .select('challenge_id, challenges!inner(challenge_type)')
+        .eq('user_id', user.id)
+        .eq('assigned_date', weekStart)
+        .eq('challenges.challenge_type', 'weekly');
+
+      if (currentDailyError || currentWeeklyError) {
+        console.error('Error loading active challenge assignments:', currentDailyError || currentWeeklyError);
         return;
       }
-    }
 
-    const { data: currentDailyRows, error: currentDailyError } = await supabase
-      .from('user_challenge_progress')
-      .select('challenge_id, challenges!inner(challenge_type)')
-      .eq('user_id', user.id)
-      .eq('assigned_date', today)
-      .eq('challenges.challenge_type', 'daily');
-    const { data: currentWeeklyRows, error: currentWeeklyError } = await supabase
-      .from('user_challenge_progress')
-      .select('challenge_id, challenges!inner(challenge_type)')
-      .eq('user_id', user.id)
-      .eq('assigned_date', weekStart)
-      .eq('challenges.challenge_type', 'weekly');
+      const existingDailyIds = new Set((currentDailyRows || []).map((row) => row.challenge_id));
+      const existingWeeklyIds = new Set((currentWeeklyRows || []).map((row) => row.challenge_id));
+      const dailyChallenges = (activeChallenges || []).filter(
+        (challenge) => challenge.challenge_type === 'daily'
+      );
+      const weeklyChallenges = (activeChallenges || []).filter(
+        (challenge) => challenge.challenge_type === 'weekly'
+      );
 
-    if (currentDailyError || currentWeeklyError) {
-      console.error('Error loading active challenge assignments:', currentDailyError || currentWeeklyError);
-      return;
-    }
+      const toAssignDaily = dailyChallenges.filter((challenge) => !existingDailyIds.has(challenge.id));
+      const toAssignWeekly = weeklyChallenges.filter((challenge) => !existingWeeklyIds.has(challenge.id));
 
-    const existingDailyIds = new Set((currentDailyRows || []).map((row) => row.challenge_id));
-    const existingWeeklyIds = new Set((currentWeeklyRows || []).map((row) => row.challenge_id));
-    const dailyChallenges = (activeChallenges || []).filter((challenge) => challenge.challenge_type === 'daily');
-    const weeklyChallenges = (activeChallenges || []).filter((challenge) => challenge.challenge_type === 'weekly');
+      const inserts = [
+        ...toAssignDaily.map((challenge) => ({
+          user_id: user.id,
+          challenge_id: challenge.id,
+          assigned_date: today,
+          current_value: 0,
+          is_completed: false,
+        })),
+        ...toAssignWeekly.map((challenge) => ({
+          user_id: user.id,
+          challenge_id: challenge.id,
+          assigned_date: weekStart,
+          current_value: 0,
+          is_completed: false,
+        })),
+      ];
 
-    const toAssignDaily = dailyChallenges.filter((challenge) => !existingDailyIds.has(challenge.id));
-    const toAssignWeekly = weeklyChallenges.filter((challenge) => !existingWeeklyIds.has(challenge.id));
-
-    const inserts = [
-      ...toAssignDaily.map((challenge) => ({
-        user_id: user.id,
-        challenge_id: challenge.id,
-        assigned_date: today,
-        current_value: 0,
-        is_completed: false,
-      })),
-      ...toAssignWeekly.map((challenge) => ({
-        user_id: user.id,
-        challenge_id: challenge.id,
-        assigned_date: weekStart,
-        current_value: 0,
-        is_completed: false,
-      })),
-    ];
-
-    if (inserts.length > 0) {
-      const { error: insertError } = await supabase
-        .from('user_challenge_progress')
-        .insert(inserts);
-      if (insertError) {
-        console.error('Error assigning recurring challenge cycles:', insertError);
+      if (inserts.length > 0) {
+        const { error: insertError } = await supabase
+          .from('user_challenge_progress')
+          .insert(inserts);
+        if (insertError) {
+          console.error('Error assigning recurring challenge cycles:', insertError);
+        }
       }
-    }
 
-    await fetchUserChallenges();
+      await fetchUserChallenges();
+    } catch (assignChallengesError) {
+      console.error('Unexpected error assigning recurring challenges:', assignChallengesError);
+    }
   }, [user, profile, fetchProfile, fetchUserChallenges, updateProfile]);
 
   const createProfile = useCallback(
