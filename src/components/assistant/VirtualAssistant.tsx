@@ -34,6 +34,8 @@ type FocusId = 'peito' | 'costas' | 'pernas' | 'ombros' | 'bracos' | 'core' | 'c
 type PendingAction = 'workout' | 'diet' | 'reminder' | null;
 type NotificationState = NotificationPermission | 'unsupported';
 const ASSISTANT_NAME = 'PERSONAL AMIGO';
+const APP_NOTIFICATION_ICON = '/favicon.png';
+const APP_NOTIFICATION_BADGE = '/favicon.png';
 
 interface AssistantMessage {
   id: string;
@@ -1099,7 +1101,11 @@ const buildRecentHistory = (): string =>
           toast.info(`Lembrete: ${reminder.title}`);
 
           if (notificationState === 'granted' && typeof window !== 'undefined' && 'Notification' in window) {
-            new Notification(`${ASSISTANT_NAME} - Lembrete`, { body: reminder.title });
+            new Notification(`${ASSISTANT_NAME} - Lembrete`, {
+              body: reminder.title,
+              icon: APP_NOTIFICATION_ICON,
+              badge: APP_NOTIFICATION_BADGE,
+            });
           }
 
           return { ...reminder, notified: true };

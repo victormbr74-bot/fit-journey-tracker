@@ -2,6 +2,9 @@ self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
+const APP_ICON = "/favicon.png";
+const APP_BADGE = "/favicon.png";
+
 self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
@@ -36,6 +39,8 @@ self.addEventListener("push", (event) => {
     title: "FitChat",
     body: "Voce recebeu uma nova mensagem.",
     targetPath: "/chat",
+    icon: APP_ICON,
+    badge: APP_BADGE,
   };
 
   try {
@@ -44,6 +49,8 @@ self.addEventListener("push", (event) => {
       title: parsed?.title || payload.title,
       body: parsed?.body || payload.body,
       targetPath: parsed?.targetPath || payload.targetPath,
+      icon: parsed?.icon || payload.icon,
+      badge: parsed?.badge || payload.badge,
     };
   } catch {
     const text = event.data.text();
@@ -55,8 +62,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
-      icon: "/favicon.png",
-      badge: "/favicon.png",
+      icon: payload.icon,
+      badge: payload.badge,
       tag: "fitchat-message",
       renotify: true,
       data: {

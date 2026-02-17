@@ -199,6 +199,8 @@ const GLOBAL_SYNC_POLL_INTERVAL_MS = 3500;
 const PHONE_REGEX = /^[0-9()+\-\s]{8,20}$/;
 const FIT_CHAT_ENTRY_PATH = '/chat';
 const FIT_CHAT_WEB_PUSH_PUBLIC_KEY = import.meta.env.VITE_FITCHAT_WEB_PUSH_PUBLIC_KEY as string | undefined;
+const APP_NOTIFICATION_ICON = '/favicon.png';
+const APP_NOTIFICATION_BADGE = '/favicon.png';
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const sanitizeHandleInput = (value: string) => sanitizeHandleBody(value);
@@ -777,17 +779,25 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             body: description,
             tag: `fitchat-${Date.now()}`,
             renotify: true,
-            icon: '/favicon.png',
-            badge: '/favicon.png',
+            icon: APP_NOTIFICATION_ICON,
+            badge: APP_NOTIFICATION_BADGE,
           });
           return;
         }
       }
 
-      new Notification(title, { body: description });
+      new Notification(title, {
+        body: description,
+        icon: APP_NOTIFICATION_ICON,
+        badge: APP_NOTIFICATION_BADGE,
+      });
     } catch (error) {
       console.error('Erro ao disparar notificacao nativa:', error);
-      new Notification(title, { body: description });
+      new Notification(title, {
+        body: description,
+        icon: APP_NOTIFICATION_ICON,
+        badge: APP_NOTIFICATION_BADGE,
+      });
     }
   }, []);
 
@@ -5059,5 +5069,3 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     </div>
   );
 }
-
-
