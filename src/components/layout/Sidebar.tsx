@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
+  Bell,
   Bot,
   Dumbbell,
-  Heart,
   Home,
   LogOut,
   MapPin,
@@ -30,7 +30,7 @@ const primaryNavItems = [
   { path: '/feed', label: 'Feed', icon: ImagePlus },
   { path: '/friends', label: 'Rede', icon: SquarePlay },
   { path: '/chat', label: 'Mensagens', icon: MessageCircle },
-  { path: '/notifications', label: 'Atividade', icon: Heart },
+  { path: '/notifications', label: 'Atividade', icon: Bell },
 ];
 
 const secondaryNavItems = [
@@ -259,14 +259,14 @@ export function Sidebar() {
           SouFit
         </button>
 
-        <div className="flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-1">
           <button
             type="button"
             onClick={() => navigateTo('/notifications')}
             className={cn('social-mobile-icon-button', location.pathname === '/notifications' && 'active')}
             aria-label="Abrir notificacoes"
           >
-            <Heart className="h-5 w-5" />
+            <Bell className="h-5 w-5" />
             {unreadCount > 0 && (
               <span className="social-counter-badge -right-1 -top-1 min-w-4 text-[10px]">
                 {unreadCountLabel}

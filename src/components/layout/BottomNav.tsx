@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Heart, Home, ImagePlus, SquarePlay, User } from 'lucide-react';
+import { Bell, Home, ImagePlus, SquarePlay, User } from 'lucide-react';
 
 import { useProfile } from '@/hooks/useProfile';
 import { SOCIAL_HUB_STORAGE_PREFIX } from '@/lib/storageKeys';
@@ -12,7 +12,7 @@ const navItems = [
   { path: '/dashboard', label: 'Inicio', icon: Home },
   { path: '/feed', label: 'Feed', icon: ImagePlus },
   { path: '/friends', label: 'Rede', icon: SquarePlay },
-  { path: '/notifications', label: 'Atividade', icon: Heart },
+  { path: '/notifications', label: 'Atividade', icon: Bell },
   { path: '/profile', label: 'Perfil', icon: User },
 ];
 

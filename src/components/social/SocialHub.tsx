@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
-  BellRing,
+  Bell,
   Camera,
   ChevronLeft,
   ChevronRight,
@@ -1285,6 +1285,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [chatSharedStoryPreviewId, setChatSharedStoryPreviewId] = useState('');
   const [shareSearch, setShareSearch] = useState('');
   const [feedSearch, setFeedSearch] = useState('');
+  const [feedRemoteProfiles, setFeedRemoteProfiles] = useState<DiscoverableProfile[]>([]);
+  const [isSearchingFeedProfiles, setIsSearchingFeedProfiles] = useState(false);
   const [shareMessage, setShareMessage] = useState('');
   const [selectedShareFriendIds, setSelectedShareFriendIds] = useState<string[]>([]);
   const [postCommentInputs, setPostCommentInputs] = useState<Record<string, string>>({});
@@ -2303,6 +2305,77 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     return mapRemoteProfilesToDiscoverable(mappedRows, normalizedProfileHandle);
   }, [normalizedProfileHandle, profile.id]);
 
+  const fetchRemoteProfilesByText = useCallback(async (
+    rawQuery: string,
+    limitCount = 12
+  ): Promise<DiscoverableProfile[]> => {
+    const queryText = rawQuery.trim();
+    if (!queryText) return [];
+
+    const { data, error } = await supabase.rpc('search_profiles_by_handle', {
+      query_text: queryText,
+      limit_count: limitCount,
+      exclude_profile_id: profile.id,
+    });
+
+    if (!error && Array.isArray(data)) {
+      return mapRemoteProfilesToDiscoverable(data, normalizedProfileHandle);
+    }
+
+    if (error && !isMissingRpcFunctionError(error)) {
+      console.error('Erro ao buscar perfis por texto (rpc):', error);
+    }
+
+    const normalizedHandleQuery = sanitizeHandleInput(queryText);
+    const fallbackCatalog = new Map<string, RemoteProfileSearchResult>();
+
+    if (normalizedHandleQuery) {
+      const { data: handleRows, error: handleError } = await supabase
+        .from('profiles')
+        .select('id, name, handle, goal')
+        .neq('id', profile.id)
+        .ilike('handle', `%${normalizedHandleQuery}%`)
+        .order('updated_at', { ascending: false })
+        .limit(limitCount);
+
+      if (handleError) {
+        console.error('Erro ao buscar perfis por texto (fallback handle):', handleError);
+      } else {
+        (handleRows || []).forEach((row) => {
+          fallbackCatalog.set(row.id, {
+            profile_id: row.id,
+            name: row.name,
+            handle: row.handle,
+            goal: row.goal,
+          });
+        });
+      }
+    }
+
+    const { data: nameRows, error: nameError } = await supabase
+      .from('profiles')
+      .select('id, name, handle, goal')
+      .neq('id', profile.id)
+      .ilike('name', `%${queryText}%`)
+      .order('updated_at', { ascending: false })
+      .limit(limitCount);
+
+    if (nameError) {
+      console.error('Erro ao buscar perfis por texto (fallback nome):', nameError);
+    } else {
+      (nameRows || []).forEach((row) => {
+        fallbackCatalog.set(row.id, {
+          profile_id: row.id,
+          name: row.name,
+          handle: row.handle,
+          goal: row.goal,
+        });
+      });
+    }
+
+    return mapRemoteProfilesToDiscoverable(Array.from(fallbackCatalog.values()), normalizedProfileHandle);
+  }, [normalizedProfileHandle, profile.id]);
+
   const fetchRemoteProfilesByPhone = useCallback(async (
     phoneInputs: string[],
     limitCount = 120
@@ -2508,6 +2581,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   };
 
   const friendHandleSearch = useMemo(() => sanitizeHandleInput(friendHandle), [friendHandle]);
+  const feedSearchQuery = useMemo(() => feedSearch.trim(), [feedSearch]);
 
   useEffect(() => {
     if (!friendHandleSearch) {
@@ -2531,6 +2605,29 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       window.clearTimeout(searchTimer);
     };
   }, [fetchRemoteProfilesByHandle, friendHandleSearch]);
+
+  useEffect(() => {
+    if (!feedSearchQuery || feedSearchQuery.length < 2) {
+      setFeedRemoteProfiles([]);
+      setIsSearchingFeedProfiles(false);
+      return;
+    }
+
+    let canceled = false;
+    const searchTimer = window.setTimeout(async () => {
+      setIsSearchingFeedProfiles(true);
+      const remoteProfiles = await fetchRemoteProfilesByText(feedSearchQuery, 10);
+      if (canceled) return;
+
+      setFeedRemoteProfiles(remoteProfiles);
+      setIsSearchingFeedProfiles(false);
+    }, 240);
+
+    return () => {
+      canceled = true;
+      window.clearTimeout(searchTimer);
+    };
+  }, [feedSearchQuery, fetchRemoteProfilesByText]);
 
   const localDiscoverableProfiles = useMemo(() => {
     const catalog = new Map<string, DiscoverableProfile>();
@@ -2949,6 +3046,50 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       }
     );
   }, [socialState.friends, shareSearch]);
+
+  const filteredFeedProfiles = useMemo(() => {
+    const query = feedSearchQuery.toLowerCase();
+    if (!query) return [];
+
+    const normalizedHandleQuery = sanitizeHandleInput(feedSearchQuery);
+    const catalog = new Map<string, DiscoverableProfile>();
+    const registerCandidate = (candidate: DiscoverableProfile) => {
+      const normalizedHandle = sanitizeHandleInput(candidate.handle);
+      if (!normalizedHandle || normalizedHandle === normalizedProfileHandle) return;
+      if (catalog.has(normalizedHandle)) return;
+      catalog.set(normalizedHandle, {
+        ...candidate,
+        handle: toHandle(candidate.handle),
+        normalizedHandle,
+      });
+    };
+
+    discoverableProfiles.forEach(registerCandidate);
+    feedRemoteProfiles.forEach(registerCandidate);
+
+    return Array.from(catalog.values())
+      .filter((candidate) => {
+        const candidateName = (candidate.name || '').toLowerCase();
+        const candidateHandle = toHandle(candidate.handle || '').toLowerCase();
+        return (
+          candidateName.includes(query) ||
+          candidateHandle.includes(query) ||
+          (Boolean(normalizedHandleQuery) && candidate.normalizedHandle.includes(normalizedHandleQuery))
+        );
+      })
+      .sort((a, b) => {
+        const aHandleScore = a.normalizedHandle.startsWith(normalizedHandleQuery) ? 0 : 1;
+        const bHandleScore = b.normalizedHandle.startsWith(normalizedHandleQuery) ? 0 : 1;
+        if (aHandleScore !== bHandleScore) return aHandleScore - bHandleScore;
+        return a.handle.localeCompare(b.handle);
+      })
+      .slice(0, 8);
+  }, [
+    discoverableProfiles,
+    feedRemoteProfiles,
+    feedSearchQuery,
+    normalizedProfileHandle,
+  ]);
 
   const filteredFeedPosts = useMemo(() => {
     const query = feedSearch.trim().toLowerCase();
@@ -5332,7 +5473,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               Feed
             </TabsTrigger>
             <TabsTrigger value="notifications" className="py-2 text-xs md:text-sm">
-              <BellRing className="mr-1 h-4 w-4" />
+              <Bell className="mr-1 h-4 w-4" />
               Notificacoes
             </TabsTrigger>
           </TabsList>
@@ -5429,7 +5570,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     Amigos
                   </TabsTrigger>
                   <TabsTrigger value="pending" className="py-2 text-xs md:text-sm">
-                    <BellRing className="mr-1 h-4 w-4" />
+                    <Bell className="mr-1 h-4 w-4" />
                     Pendentes
                   </TabsTrigger>
                 </TabsList>
@@ -6492,7 +6633,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               <Input
                 value={feedSearch}
                 onChange={(event) => setFeedSearch(event.target.value)}
-                placeholder="Buscar no feed por nome, @usuario ou legenda"
+                placeholder="Buscar posts e usuarios por nome, @usuario ou legenda"
                 className="h-10 rounded-full pl-9"
               />
             </div>
@@ -6506,6 +6647,78 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               <span className="sr-only">Criar post</span>
             </Button>
           </div>
+
+          {(feedSearchQuery.length >= 2 || isSearchingFeedProfiles) && (
+            <div className="space-y-2 rounded-2xl border border-border/80 bg-card/65 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Usuarios
+                </p>
+                {isSearchingFeedProfiles && (
+                  <span className="text-xs text-muted-foreground">Buscando...</span>
+                )}
+              </div>
+
+              {!isSearchingFeedProfiles && !filteredFeedProfiles.length && (
+                <p className="text-xs text-muted-foreground">
+                  Nenhum usuario novo encontrado para essa busca.
+                </p>
+              )}
+
+              {!!filteredFeedProfiles.length && (
+                <div className="space-y-1.5">
+                  {filteredFeedProfiles.map((candidate) => {
+                    const normalizedHandle = candidate.normalizedHandle;
+                    const followedFriend = friendsByHandle.get(normalizedHandle);
+                    const alreadyFollowing = Boolean(followedFriend);
+                    const hasOutgoingRequest = outgoingPendingHandles.has(normalizedHandle);
+                    const hasIncomingRequest = incomingPendingHandles.has(normalizedHandle);
+                    const isMyOwnProfile = normalizedHandle === normalizedProfileHandle;
+
+                    return (
+                      <div
+                        key={candidate.normalizedHandle}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/55 px-2 py-1.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="line-clamp-1 text-sm font-medium">{candidate.name}</p>
+                          <p className="line-clamp-1 text-xs text-muted-foreground">{candidate.handle}</p>
+                        </div>
+                        {alreadyFollowing && followedFriend ? (
+                          <button
+                            type="button"
+                            onClick={() => startChatWithFriend(followedFriend.id)}
+                            className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground"
+                          >
+                            Abrir
+                          </button>
+                        ) : hasOutgoingRequest ? (
+                          <span className="text-[11px] text-muted-foreground">Pendente</span>
+                        ) : hasIncomingRequest ? (
+                          <span className="text-[11px] text-muted-foreground">Aceite pedido</span>
+                        ) : isMyOwnProfile ? (
+                          <span className="text-[11px] text-muted-foreground">Voce</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void requestFollowByHandle(candidate.handle, {
+                                preferredName: candidate.name,
+                                preferredGoal: candidate.goal,
+                              })
+                            }
+                            className="rounded-full border border-primary/60 px-2.5 py-1 text-[11px] font-medium text-primary"
+                          >
+                            Seguir
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="rounded-2xl border border-border/80 bg-card/65 px-3 py-3">
             <div className="social-stories-row">
@@ -6908,7 +7121,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                   </>
                 ) : (
                   <>
-                    <BellRing className="h-4 w-4" />
+                    <Bell className="h-4 w-4" />
                     Ativar notificacoes do FitChat
                   </>
                 )}
