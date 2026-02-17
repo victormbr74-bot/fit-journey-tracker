@@ -6,6 +6,7 @@ export type User = {
   id: string;
   email: string;
   name: string;
+  phone?: string;
 };
 
 const mapUser = (supaUser: SupabaseUser | null): User | null => {
@@ -13,7 +14,8 @@ const mapUser = (supaUser: SupabaseUser | null): User | null => {
   return {
     id: supaUser.id,
     email: supaUser.email || '',
-    name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'Usuário',
+    name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'Usuario',
+    phone: supaUser.phone || supaUser.user_metadata?.phone || '',
   };
 };
 
@@ -22,13 +24,13 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Set up auth state listener BEFORE getting session
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(mapUser(session?.user ?? null));
       setLoading(false);
     });
 
-    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(mapUser(session?.user ?? null));
       setLoading(false);
@@ -39,22 +41,25 @@ export function useAuth() {
     };
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string, name: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: window.location.origin,
-        data: { name },
-      },
-    });
+  const signUp = useCallback(
+    async (email: string, password: string, name: string, phone?: string) => {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: window.location.origin,
+          data: { name, phone: phone || null },
+        },
+      });
 
-    if (error) {
-      return { data: null, error };
-    }
+      if (error) {
+        return { data: null, error };
+      }
 
-    return { data: mapUser(data.user), error: null };
-  }, []);
+      return { data: mapUser(data.user), error: null };
+    },
+    []
+  );
 
   const signIn = useCallback(async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({

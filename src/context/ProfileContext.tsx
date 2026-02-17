@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { isValidHandle, toHandle } from '@/lib/handleUtils';
+import { isValidHandle, normalizeHandle, toHandle } from '@/lib/handleUtils';
 import {
   UserProfile,
   WeightEntry,
@@ -55,6 +55,21 @@ type ProfileProviderProps = {
 
 const ProfileContext = createContext<ProfileContextValue | null>(null);
 
+const isMissingRpcFunctionError = (error: { code?: string; message?: string; details?: string } | null | undefined) => {
+  if (!error) return false;
+  if (error.code === 'PGRST202') return true;
+  const combinedText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
+  return combinedText.includes('could not find the function');
+};
+
+const buildHandleCandidate = (seedHandle: string, suffix: number) => {
+  const base = normalizeHandle(seedHandle) || 'fit.user';
+  if (!suffix) return toHandle(base);
+  const suffixText = String(suffix);
+  const maxBaseLen = Math.max(3, 30 - suffixText.length);
+  return toHandle(`${base.slice(0, maxBaseLen)}${suffixText}`);
+};
+
 export function ProfileProvider({ children }: ProfileProviderProps) {
   const { user, loading: authLoading } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -76,8 +91,37 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       });
 
       if (error) {
-        console.error('Error reserving unique handle:', error);
-        return { error: new Error(error.message) };
+        if (!isMissingRpcFunctionError(error)) {
+          console.error('Error reserving unique handle:', error);
+          return { error: new Error(error.message) };
+        }
+
+        // Fallback if RPC is unavailable in this environment.
+        const fallbackHandle = toHandle(normalizedSeed);
+        const { data: rows, error: queryError } = await supabase
+          .from('profiles')
+          .select('id, handle')
+          .limit(500);
+
+        if (queryError || !Array.isArray(rows)) {
+          return { handle: fallbackHandle, error: null };
+        }
+
+        const takenHandles = new Set<string>(
+          rows
+            .filter((row) => !excludeProfileId || row.id !== excludeProfileId)
+            .map((row) => normalizeHandle(row.handle))
+            .filter(Boolean)
+        );
+
+        for (let suffix = 0; suffix < 500; suffix += 1) {
+          const candidate = buildHandleCandidate(fallbackHandle, suffix);
+          if (!takenHandles.has(normalizeHandle(candidate))) {
+            return { handle: candidate, error: null };
+          }
+        }
+
+        return { handle: fallbackHandle, error: null };
       }
 
       return { handle: toHandle(data || normalizedSeed), error: null };
@@ -99,8 +143,30 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       });
 
       if (error) {
-        console.error('Error checking handle availability:', error);
-        return { available: false, normalizedHandle, error: new Error(error.message) };
+        if (!isMissingRpcFunctionError(error)) {
+          console.error('Error checking handle availability:', error);
+          return { available: false, normalizedHandle, error: new Error(error.message) };
+        }
+
+        // Fallback if RPC is unavailable in this environment.
+        const { data: rows, error: queryError } = await supabase
+          .from('profiles')
+          .select('id, handle')
+          .limit(500);
+
+        if (queryError || !Array.isArray(rows)) {
+          // Do not block onboarding/profile updates if backend function is missing.
+          return { available: true, normalizedHandle, error: null };
+        }
+
+        const normalizedTarget = normalizeHandle(normalizedHandle);
+        const handleTaken = rows.some((row) => {
+          if (!row?.handle) return false;
+          if (excludeProfileId && row.id === excludeProfileId) return false;
+          return normalizeHandle(row.handle) === normalizedTarget;
+        });
+
+        return { available: !handleTaken, normalizedHandle, error: null };
       }
 
       return { available: Boolean(data), normalizedHandle, error: null };
@@ -132,6 +198,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         name: data.name,
         handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
+        phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
         weight: data.weight || 0,
@@ -347,6 +414,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         name: profileData.name || user.name,
         handle: reservedHandle,
         email: profileData.email || user.email,
+        phone: profileData.phone || user.phone || null,
         birthdate: profileData.birthdate || null,
         age: profileData.age || null,
         weight: profileData.weight || null,
@@ -375,6 +443,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         name: data.name,
         handle: isValidHandle(data.handle || '') ? data.handle : reservedHandle,
         email: data.email,
+        phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
         weight: data.weight || 0,
@@ -450,6 +519,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         name: data.name,
         handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
+        phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
         weight: data.weight || 0,

@@ -5,18 +5,19 @@ import { Input } from '@/components/ui/input';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { GOALS, MUSCLE_GROUPS, Goal } from '@/types/user';
-import { ArrowRight, ArrowLeft, Check, Ruler, Weight, Calendar, Target, Dumbbell, Clock } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Check, Ruler, Weight, Calendar, Target, Dumbbell, Clock, Smartphone } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatHandleInput, getHandleBodyLimits, isValidHandle, toHandle } from '@/lib/handleUtils';
 
-type Step = 'handle' | 'birthdate' | 'weight' | 'height' | 'goal' | 'muscles' | 'frequency';
+type Step = 'handle' | 'phone' | 'birthdate' | 'weight' | 'height' | 'goal' | 'muscles' | 'frequency';
 
-const steps: Step[] = ['handle', 'birthdate', 'weight', 'height', 'goal', 'muscles', 'frequency'];
+const steps: Step[] = ['handle', 'phone', 'birthdate', 'weight', 'height', 'goal', 'muscles', 'frequency'];
 const { min: handleMinLength, max: handleMaxLength } = getHandleBodyLimits();
 
 export function OnboardingFlow() {
   const [currentStep, setCurrentStep] = useState(0);
   const [handle, setHandle] = useState('');
+  const [phone, setPhone] = useState('');
   const [birthdate, setBirthdate] = useState('');
   const [weight, setWeight] = useState('');
   const [height, setHeight] = useState('');
@@ -34,6 +35,7 @@ export function OnboardingFlow() {
     if (!user) return;
     const seed = user.name || user.email?.split('@')[0] || 'fit.user';
     setHandle(toHandle(seed));
+    setPhone(user.phone || '');
   }, [user]);
 
   const calculateAge = (dateString: string): number => {
@@ -90,6 +92,7 @@ export function OnboardingFlow() {
         name: user.name || user.email?.split('@')[0] || 'Usuario',
         handle: toHandle(handle),
         email: user.email || '',
+        phone: phone.trim() || user.phone || '',
         birthdate,
         age,
         weight: parseFloat(weight),
@@ -133,6 +136,8 @@ export function OnboardingFlow() {
         const age = calculateAge(birthdate);
         return age >= 10 && age <= 120;
       }
+      case 'phone':
+        return !phone.trim() || /^[0-9()+\-\s]{8,20}$/.test(phone.trim());
       case 'weight':
         return weight && parseFloat(weight) > 0;
       case 'height':
@@ -154,6 +159,11 @@ export function OnboardingFlow() {
         icon: Target,
         title: 'Escolha seu @usuario',
         subtitle: 'Seu @ sera unico e pode ser alterado no perfil',
+      },
+      phone: {
+        icon: Smartphone,
+        title: 'Qual seu celular?',
+        subtitle: 'Opcional, para facilitar contato e recuperacao',
       },
       birthdate: {
         icon: Calendar,
@@ -223,6 +233,22 @@ export function OnboardingFlow() {
             className="text-center text-xl h-16"
             max={new Date().toISOString().split('T')[0]}
           />
+        )}
+
+        {steps[currentStep] === 'phone' && (
+          <div className="space-y-3">
+            <Input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="text-center text-xl h-16"
+              placeholder="(11) 99999-9999"
+              autoComplete="tel"
+            />
+            <p className="text-xs text-muted-foreground text-center">
+              Campo opcional. Se preencher, use apenas numeros e sinais comuns.
+            </p>
+          </div>
         )}
 
         {steps[currentStep] === 'weight' && (

@@ -68,6 +68,7 @@ export type Database = {
           id: string
           muscle_groups: string[] | null
           name: string
+          phone: string | null
           points: number | null
           spotify_playlist: string | null
           training_frequency: number | null
@@ -86,6 +87,7 @@ export type Database = {
           id: string
           muscle_groups?: string[] | null
           name: string
+          phone?: string | null
           points?: number | null
           spotify_playlist?: string | null
           training_frequency?: number | null
@@ -104,12 +106,46 @@ export type Database = {
           id?: string
           muscle_groups?: string[] | null
           name?: string
+          phone?: string | null
           points?: number | null
           spotify_playlist?: string | null
           training_frequency?: number | null
           updated_at?: string | null
           weight?: number | null
           youtube_playlist?: string | null
+        }
+        Relationships: []
+      }
+      social_global_state: {
+        Row: {
+          chat_events: Json
+          created_at: string
+          feed_posts: Json
+          friend_requests: Json
+          id: boolean
+          stories: Json
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          chat_events?: Json
+          created_at?: string
+          feed_posts?: Json
+          friend_requests?: Json
+          id?: boolean
+          stories?: Json
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          chat_events?: Json
+          created_at?: string
+          feed_posts?: Json
+          friend_requests?: Json
+          id?: boolean
+          stories?: Json
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }

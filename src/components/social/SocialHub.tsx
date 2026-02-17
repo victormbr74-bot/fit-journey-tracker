@@ -93,6 +93,13 @@ interface RemoteProfileSearchResult {
   goal: string | null;
 }
 
+interface SocialGlobalSnapshot {
+  feed_posts: SocialFeedPost[];
+  stories: SocialStory[];
+  friend_requests: SocialFriendRequest[];
+  chat_events: SocialGlobalChatEvent[];
+}
+
 const EMPTY_SOCIAL_STATE: SocialState = {
   friends: [],
   clans: [],
@@ -125,6 +132,8 @@ const GLOBAL_CHAT_EVENT_LIMIT = 1000;
 const SEEN_CHAT_EVENT_LIMIT = 2000;
 const SEEN_FRIEND_REQUEST_LIMIT = 1200;
 const STORY_DURATION_HOURS = 24;
+const SOCIAL_GLOBAL_STATE_ID = true;
+const GLOBAL_SYNC_POLL_INTERVAL_MS = 3500;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const sanitizeHandleInput = (value: string) => sanitizeHandleBody(value);
@@ -326,6 +335,40 @@ const sanitizeSeenChatEventIds = (eventIds: string[]) =>
 const sanitizeSeenFriendRequestIds = (requestIds: string[]) =>
   Array.from(new Set(requestIds.filter(Boolean))).slice(-SEEN_FRIEND_REQUEST_LIMIT);
 
+const createSanitizedGlobalSnapshot = (
+  posts: SocialFeedPost[],
+  stories: SocialStory[],
+  requests: SocialFriendRequest[],
+  chatEvents: SocialGlobalChatEvent[]
+): SocialGlobalSnapshot => ({
+  feed_posts: sanitizePosts(posts),
+  stories: sanitizeStories(stories),
+  friend_requests: sanitizeFriendRequests(requests),
+  chat_events: sanitizeChatEvents(chatEvents),
+});
+
+const getGlobalSnapshotHash = (snapshot: SocialGlobalSnapshot) => JSON.stringify(snapshot);
+
+const isMissingSocialGlobalStateError = (
+  error: { code?: string; message?: string; details?: string } | null | undefined
+) => {
+  if (!error) return false;
+  if (error.code === 'PGRST205') return true;
+  const combinedText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
+  return combinedText.includes('social_global_state') && (
+    combinedText.includes('not found') || combinedText.includes('could not find')
+  );
+};
+
+const isMissingRpcFunctionError = (
+  error: { code?: string; message?: string; details?: string } | null | undefined
+) => {
+  if (!error) return false;
+  if (error.code === 'PGRST202') return true;
+  const combinedText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
+  return combinedText.includes('could not find the function');
+};
+
 const mapRemoteProfilesToDiscoverable = (
   rows: RemoteProfileSearchResult[],
   normalizedProfileHandle: string
@@ -471,6 +514,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [seenChatEventIds, setSeenChatEventIds] = useState<string[]>([]);
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SocialSection>(defaultSection);
+  const [remoteSnapshotLoaded, setRemoteSnapshotLoaded] = useState(false);
+  const [remoteGlobalSyncEnabled, setRemoteGlobalSyncEnabled] = useState(true);
 
   const [friendName, setFriendName] = useState('');
   const [friendHandle, setFriendHandle] = useState('');
@@ -519,6 +564,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const chatMessagesContainerRef = useRef<HTMLDivElement | null>(null);
   const outgoingRequestStatusRef = useRef<Map<string, SocialFriendRequest['status']>>(new Map());
   const initializedOutgoingRequestStatusRef = useRef(false);
+  const applyingRemoteSnapshotRef = useRef(false);
+  const lastGlobalSnapshotHashRef = useRef('');
 
   const triggerSystemNotification = useCallback((title: string, description: string) => {
     if ('Notification' in window && Notification.permission === 'granted') {
@@ -555,8 +602,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   }, [defaultSection]);
 
   useEffect(() => {
+    applyingRemoteSnapshotRef.current = false;
+    lastGlobalSnapshotHashRef.current = '';
+    setRemoteGlobalSyncEnabled(true);
+  }, [profile.id]);
+
+  useEffect(() => {
     setFriendRequestsLoaded(false);
     setChatEventsLoaded(false);
+    setRemoteSnapshotLoaded(false);
 
     const storedGlobalPosts = window.localStorage.getItem(SOCIAL_GLOBAL_FEED_STORAGE_KEY);
     if (storedGlobalPosts) {
@@ -748,6 +802,160 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, [seenChatEventsStorageKey, seenFriendRequestsStorageKey]);
+
+  const fetchRemoteGlobalSnapshot = useCallback(async () => {
+    if (!remoteGlobalSyncEnabled) {
+      setRemoteSnapshotLoaded(true);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('social_global_state')
+        .select('feed_posts, stories, friend_requests, chat_events')
+        .eq('id', SOCIAL_GLOBAL_STATE_ID)
+        .maybeSingle();
+
+      if (error) {
+        if (isMissingSocialGlobalStateError(error)) {
+          setRemoteGlobalSyncEnabled(false);
+          setRemoteSnapshotLoaded(true);
+          return;
+        }
+        console.error('Erro ao carregar snapshot social global:', error);
+        setRemoteSnapshotLoaded(true);
+        return;
+      }
+
+      if (!data) {
+        const emptySnapshot = createSanitizedGlobalSnapshot([], [], [], []);
+        const { error: upsertError } = await supabase
+          .from('social_global_state')
+          .upsert(
+            {
+              id: SOCIAL_GLOBAL_STATE_ID,
+              feed_posts: emptySnapshot.feed_posts,
+              stories: emptySnapshot.stories,
+              friend_requests: emptySnapshot.friend_requests,
+              chat_events: emptySnapshot.chat_events,
+              updated_by: profile.id,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'id' }
+          );
+
+        if (upsertError) {
+          if (isMissingSocialGlobalStateError(upsertError)) {
+            setRemoteGlobalSyncEnabled(false);
+            setRemoteSnapshotLoaded(true);
+            return;
+          }
+          console.error('Erro ao inicializar snapshot social global:', upsertError);
+        } else {
+          lastGlobalSnapshotHashRef.current = getGlobalSnapshotHash(emptySnapshot);
+        }
+
+        setRemoteSnapshotLoaded(true);
+        return;
+      }
+
+      const nextSnapshot = createSanitizedGlobalSnapshot(
+        Array.isArray(data.feed_posts) ? (data.feed_posts as SocialFeedPost[]) : [],
+        Array.isArray(data.stories) ? (data.stories as SocialStory[]) : [],
+        Array.isArray(data.friend_requests) ? (data.friend_requests as SocialFriendRequest[]) : [],
+        Array.isArray(data.chat_events) ? (data.chat_events as SocialGlobalChatEvent[]) : []
+      );
+
+      const nextHash = getGlobalSnapshotHash(nextSnapshot);
+      if (nextHash !== lastGlobalSnapshotHashRef.current) {
+        applyingRemoteSnapshotRef.current = true;
+        setGlobalPosts(nextSnapshot.feed_posts);
+        setGlobalStories(nextSnapshot.stories);
+        setFriendRequests(nextSnapshot.friend_requests);
+        setGlobalChatEvents(nextSnapshot.chat_events);
+        lastGlobalSnapshotHashRef.current = nextHash;
+      }
+
+      setRemoteSnapshotLoaded(true);
+    } catch (error) {
+      console.error('Erro ao sincronizar snapshot social global:', error);
+      setRemoteSnapshotLoaded(true);
+    }
+  }, [profile.id, remoteGlobalSyncEnabled]);
+
+  useEffect(() => {
+    if (!remoteGlobalSyncEnabled) return;
+    void fetchRemoteGlobalSnapshot();
+
+    const intervalId = window.setInterval(() => {
+      void fetchRemoteGlobalSnapshot();
+    }, GLOBAL_SYNC_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [fetchRemoteGlobalSnapshot, remoteGlobalSyncEnabled]);
+
+  useEffect(() => {
+    if (!remoteSnapshotLoaded) return;
+    if (!remoteGlobalSyncEnabled) return;
+
+    if (applyingRemoteSnapshotRef.current) {
+      applyingRemoteSnapshotRef.current = false;
+      return;
+    }
+
+    const snapshot = createSanitizedGlobalSnapshot(
+      globalPosts,
+      globalStories,
+      friendRequests,
+      globalChatEvents
+    );
+    const nextHash = getGlobalSnapshotHash(snapshot);
+    if (nextHash === lastGlobalSnapshotHashRef.current) return;
+
+    let canceled = false;
+    const syncTimer = window.setTimeout(async () => {
+      const { error } = await supabase
+        .from('social_global_state')
+        .upsert(
+          {
+            id: SOCIAL_GLOBAL_STATE_ID,
+            feed_posts: snapshot.feed_posts,
+            stories: snapshot.stories,
+            friend_requests: snapshot.friend_requests,
+            chat_events: snapshot.chat_events,
+            updated_by: profile.id,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+
+      if (canceled) return;
+
+      if (error) {
+        if (isMissingSocialGlobalStateError(error)) {
+          setRemoteGlobalSyncEnabled(false);
+          return;
+        }
+        console.error('Erro ao enviar snapshot social global:', error);
+        return;
+      }
+
+      lastGlobalSnapshotHashRef.current = nextHash;
+    }, 240);
+
+    return () => {
+      canceled = true;
+      window.clearTimeout(syncTimer);
+    };
+  }, [
+    friendRequests,
+    globalChatEvents,
+    globalPosts,
+    globalStories,
+    profile.id,
+    remoteGlobalSyncEnabled,
+    remoteSnapshotLoaded,
+  ]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
@@ -963,7 +1171,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       return mapRemoteProfilesToDiscoverable(data, normalizedProfileHandle);
     }
 
-    if (error) {
+    if (error && !isMissingRpcFunctionError(error)) {
       console.error('Erro ao buscar perfis por @usuario (rpc):', error);
     }
 
@@ -1422,23 +1630,18 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
 
     const targetProfile = await resolveDiscoverableProfileByHandle(receiverHandleValue);
-    if (!targetProfile) {
-      toast.error('Nao encontramos esse @usuario. Escolha um perfil listado na busca.');
-      return;
-    }
-
-    const receiverProfileId = targetProfile.profileId;
+    const receiverProfileId = targetProfile?.profileId;
     if (receiverProfileId && receiverProfileId === profile.id) {
       toast.error('Nao e possivel seguir voce mesmo.');
       return;
     }
 
-    const receiverNameCandidate = friendName.trim() || targetProfile.name || receiverHandleValue;
+    const receiverNameCandidate = friendName.trim() || targetProfile?.name || receiverHandleValue;
     const receiverName = receiverNameCandidate.startsWith('@')
       ? receiverNameCandidate.slice(1)
       : receiverNameCandidate;
-    const receiverGoalLabel = friendGoal.trim() || targetProfile.goal || 'Sem meta definida';
-    const receiverHandle = toHandle(targetProfile.handle || receiverHandleValue);
+    const receiverGoalLabel = friendGoal.trim() || targetProfile?.goal || 'Sem meta definida';
+    const receiverHandle = toHandle(targetProfile?.handle || receiverHandleValue);
 
     if (socialState.friends.some((friend) => normalizeHandle(friend.handle) === receiverHandleValue)) {
       toast.error('Voce ja segue esse usuario.');

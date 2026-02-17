@@ -9,6 +9,7 @@ export interface UserProfile {
   name: string;
   handle: string;
   email: string;
+  phone?: string;
   birthdate: string; // ISO date string
   age: number;
   weight: number;

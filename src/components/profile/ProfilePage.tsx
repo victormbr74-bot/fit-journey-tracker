@@ -36,6 +36,7 @@ import {
 } from '@/lib/storageKeys';
 import { normalizeHandle, toHandle } from '@/lib/handleUtils';
 import { SocialFeedPost, SocialState, SocialStory } from '@/types/social';
+import { supabase } from '@/integrations/supabase/client';
 
 interface ProfileSocialInfo {
   phrase: string;
@@ -53,6 +54,18 @@ const MAX_IMAGE_SIZE = 1080;
 const GLOBAL_FEED_POST_LIMIT = 500;
 const GLOBAL_STORY_LIMIT = 500;
 const STORY_DURATION_HOURS = 24;
+const SOCIAL_GLOBAL_STATE_ID = true;
+
+const isMissingSocialGlobalStateError = (
+  error: { code?: string; message?: string; details?: string } | null | undefined
+) => {
+  if (!error) return false;
+  if (error.code === 'PGRST205') return true;
+  const combinedText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
+  return combinedText.includes('social_global_state') && (
+    combinedText.includes('not found') || combinedText.includes('could not find')
+  );
+};
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const formatDateTime = (isoDate: string) => {
@@ -170,6 +183,7 @@ export function ProfilePage() {
   const profilePhotoInputRef = useRef<HTMLInputElement | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const storyInputRef = useRef<HTMLInputElement | null>(null);
+  const socialGlobalSyncAvailableRef = useRef(true);
 
   const profileHandle = useMemo(
     () => profile?.handle || toHandle(profile?.name || profile?.email || 'fit.user'),
@@ -201,6 +215,10 @@ export function ProfilePage() {
     setProfilePhotoDataUrl(socialInfo.profilePhotoDataUrl);
     setSocialMediaLoaded(true);
   }, [profile, socialHubStorageKey, socialProfileStorageKey]);
+
+  useEffect(() => {
+    socialGlobalSyncAvailableRef.current = true;
+  }, [profile?.id]);
 
   useEffect(() => {
     if (!profile) return;
@@ -319,6 +337,57 @@ export function ProfilePage() {
     }
   };
 
+  const syncGlobalSnapshotToSupabase = async (
+    nextPosts: SocialFeedPost[],
+    nextStories: SocialStory[]
+  ) => {
+    if (!socialGlobalSyncAvailableRef.current) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('social_global_state')
+        .select('friend_requests, chat_events')
+        .eq('id', SOCIAL_GLOBAL_STATE_ID)
+        .maybeSingle();
+
+      if (error) {
+        if (isMissingSocialGlobalStateError(error)) {
+          socialGlobalSyncAvailableRef.current = false;
+          return;
+        }
+        console.error('Erro ao carregar snapshot social global no perfil:', error);
+      }
+
+      const friendRequests = Array.isArray(data?.friend_requests) ? data.friend_requests : [];
+      const chatEvents = Array.isArray(data?.chat_events) ? data.chat_events : [];
+
+      const { error: upsertError } = await supabase
+        .from('social_global_state')
+        .upsert(
+          {
+            id: SOCIAL_GLOBAL_STATE_ID,
+            feed_posts: sanitizePosts(nextPosts),
+            stories: sanitizeStories(nextStories),
+            friend_requests: friendRequests,
+            chat_events: chatEvents,
+            updated_by: profile.id,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+
+      if (upsertError) {
+        if (isMissingSocialGlobalStateError(upsertError)) {
+          socialGlobalSyncAvailableRef.current = false;
+          return;
+        }
+        console.error('Erro ao salvar snapshot social global no perfil:', upsertError);
+      }
+    } catch (error) {
+      console.error('Erro ao sincronizar snapshot social do perfil:', error);
+    }
+  };
+
   const handleProfilePhotoSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -363,8 +432,9 @@ export function ProfilePage() {
           sharedCount: 0,
           comments: [],
         };
-
-        setGlobalPosts((previous) => sanitizePosts([nextPost, ...previous]));
+        const nextPosts = sanitizePosts([nextPost, ...globalPosts]);
+        setGlobalPosts(nextPosts);
+        void syncGlobalSnapshotToSupabase(nextPosts, globalStories);
         setPhotoCaption('');
         toast.success('Foto adicionada ao seu perfil.');
         return;
@@ -383,8 +453,9 @@ export function ProfilePage() {
         likedByHandles: [],
         sharedCount: 0,
       };
-
-      setGlobalStories((previous) => sanitizeStories([nextStory, ...previous]));
+      const nextStories = sanitizeStories([nextStory, ...globalStories]);
+      setGlobalStories(nextStories);
+      void syncGlobalSnapshotToSupabase(globalPosts, nextStories);
       setStoryCaption('');
       setActiveStoryId(nextStory.id);
       toast.success('Story publicada no seu perfil.');
