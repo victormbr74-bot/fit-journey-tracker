@@ -602,6 +602,13 @@ export function ProfilePage() {
                 <h2 className="text-2xl font-bold leading-none">{profile.name}</h2>
                 <p className="mt-2 text-sm text-muted-foreground">{profileHandle}</p>
                 <p className="text-xs text-muted-foreground">{profile.email}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-sm">
+                    <Trophy className="h-4 w-4 text-primary" />
+                    <span className="font-medium">{profile.points} pontos</span>
+                  </div>
+                  <EditProfileModal />
+                </div>
                 <Button
                   type="button"
                   size="sm"
@@ -640,6 +647,39 @@ export function ProfilePage() {
         </div>
 
         <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center gap-3 rounded-lg bg-secondary/30 p-3">
+              <Calendar className="h-5 w-5 text-info" />
+              <div>
+                <p className="text-xs text-muted-foreground">Idade</p>
+                <p className="font-medium">{profile.age} anos</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg bg-secondary/30 p-3">
+              <Ruler className="h-5 w-5 text-primary" />
+              <div>
+                <p className="text-xs text-muted-foreground">Altura</p>
+                <p className="font-medium">{profile.height} cm</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg bg-secondary/30 p-3">
+              <Scale className="h-5 w-5 text-success" />
+              <div>
+                <p className="text-xs text-muted-foreground">Peso</p>
+                <p className="font-medium">{profile.weight} kg</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg bg-secondary/30 p-3">
+              <Target className="h-5 w-5 text-warning" />
+              <div>
+                <p className="text-xs text-muted-foreground">Objetivo</p>
+                <p className="font-medium">
+                  {goalInfo?.icon} {goalInfo?.label}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="profile-bio">Frase do perfil</Label>
@@ -768,70 +808,6 @@ export function ProfilePage() {
       </div>
 
       <AppearanceSettings />
-
-      <div className="glass-card p-6 mb-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-success p-[2px]">
-              {profilePhotoDataUrl ? (
-                <img
-                  src={profilePhotoDataUrl}
-                  alt={`Foto de perfil de ${profile.name}`}
-                  className="h-full w-full rounded-2xl border border-border/40 object-cover"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center rounded-2xl bg-background">
-                  <span className="text-3xl font-bold text-primary">
-                    {profile.name.charAt(0).toUpperCase()}
-                  </span>
-                </div>
-              )}
-            </div>
-            <div>
-              <h2 className="text-xl font-bold">{profile.name}</h2>
-              <p className="text-muted-foreground">{profile.email}</p>
-              <div className="flex items-center gap-2 mt-1">
-                <Trophy className="w-4 h-4 text-primary" />
-                <span className="text-sm text-primary font-medium">{profile.points} pontos</span>
-              </div>
-            </div>
-          </div>
-          <EditProfileModal />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg">
-            <Calendar className="w-5 h-5 text-info" />
-            <div>
-              <p className="text-xs text-muted-foreground">Idade</p>
-              <p className="font-medium">{profile.age} anos</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg">
-            <Ruler className="w-5 h-5 text-primary" />
-            <div>
-              <p className="text-xs text-muted-foreground">Altura</p>
-              <p className="font-medium">{profile.height} cm</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg">
-            <Scale className="w-5 h-5 text-success" />
-            <div>
-              <p className="text-xs text-muted-foreground">Peso</p>
-              <p className="font-medium">{profile.weight} kg</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-lg">
-            <Target className="w-5 h-5 text-warning" />
-            <div>
-              <p className="text-xs text-muted-foreground">Objetivo</p>
-              <p className="font-medium">
-                {goalInfo?.icon} {goalInfo?.label}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <div className="glass-card p-6 mb-6">
         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
