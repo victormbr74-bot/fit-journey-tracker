@@ -665,6 +665,10 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         console.error('Error loading active challenges for assignment:', activeChallengesError);
         return false;
       }
+      if (!activeChallengeRows?.length) {
+        console.error('No active challenge definitions found in public.challenges.');
+        return false;
+      }
 
       const { data: progressRows, error: progressError } = await supabase
         .from('user_challenge_progress')

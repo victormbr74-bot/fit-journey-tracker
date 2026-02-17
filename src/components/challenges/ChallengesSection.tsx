@@ -3,7 +3,7 @@ import { useProfile } from '@/hooks/useProfile';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Check, Trophy, Calendar, Target } from 'lucide-react';
+import { Check, Trophy, Calendar, Target, AlertTriangle, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const toIsoDate = (date: Date) => {
@@ -28,8 +28,15 @@ const getChallengeCycleKey = () => {
 };
 
 export function ChallengesSection() {
-  const { userChallenges, assignDailyChallenges, completeChallenge, profile } = useProfile();
+  const { userChallenges, challenges, assignDailyChallenges, completeChallenge, profile } = useProfile();
   const [lastAssignmentCycle, setLastAssignmentCycle] = useState('');
+  const [isSyncingChallenges, setIsSyncingChallenges] = useState(false);
+  const [challengeSyncError, setChallengeSyncError] = useState('');
+
+  const challengeSyncErrorMessage =
+    challenges.length
+      ? 'Nao foi possivel sincronizar os desafios agora. Tente novamente.'
+      : 'Nenhum desafio ativo foi encontrado no banco. Execute as migrations para popular a tabela public.challenges.';
 
   useEffect(() => {
     if (!profile?.id) return;
@@ -41,11 +48,27 @@ export function ChallengesSection() {
       if (cycleKey === lastAssignmentCycle) return;
 
       try {
+        setIsSyncingChallenges(true);
         const assigned = await assignDailyChallenges();
-        if (!assigned) return;
+        if (!assigned) {
+          if (!cancelled) {
+            setChallengeSyncError(challengeSyncErrorMessage);
+          }
+          return;
+        }
+        if (!cancelled) {
+          setChallengeSyncError('');
+        }
       } catch (error) {
         console.error('Erro ao sincronizar desafios recorrentes:', error);
+        if (!cancelled) {
+          setChallengeSyncError(challengeSyncErrorMessage);
+        }
         return;
+      } finally {
+        if (!cancelled) {
+          setIsSyncingChallenges(false);
+        }
       }
       if (!cancelled) {
         setLastAssignmentCycle(cycleKey);
@@ -61,11 +84,30 @@ export function ChallengesSection() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [assignDailyChallenges, lastAssignmentCycle, profile?.id]);
+  }, [assignDailyChallenges, challengeSyncErrorMessage, lastAssignmentCycle, profile?.id]);
 
   useEffect(() => {
     setLastAssignmentCycle('');
+    setChallengeSyncError('');
   }, [profile?.id]);
+
+  const handleRetrySync = async () => {
+    setIsSyncingChallenges(true);
+    try {
+      const assigned = await assignDailyChallenges();
+      if (!assigned) {
+        setChallengeSyncError(challengeSyncErrorMessage);
+        return;
+      }
+      setChallengeSyncError('');
+      setLastAssignmentCycle(getChallengeCycleKey());
+    } catch (error) {
+      console.error('Erro ao tentar gerar desafios manualmente:', error);
+      setChallengeSyncError(challengeSyncErrorMessage);
+    } finally {
+      setIsSyncingChallenges(false);
+    }
+  };
 
   const dailyChallenges = userChallenges.filter(
     (challengeProgress) => challengeProgress.challenge?.challenge_type === 'daily'
@@ -156,6 +198,38 @@ export function ChallengesSection() {
 
   return (
     <div className="space-y-6">
+      {!!challengeSyncError && (
+        <Card className="border-warning/50 bg-warning/10">
+          <CardContent className="py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 text-sm font-semibold">
+                  <AlertTriangle className="h-4 w-4 text-warning" />
+                  Falha ao gerar desafios automaticamente
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">{challengeSyncError}</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleRetrySync}
+                disabled={isSyncingChallenges}
+                className="sm:self-start"
+              >
+                {isSyncingChallenges ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Gerando...
+                  </>
+                ) : (
+                  'Tentar novamente'
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="glass-card">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-lg">
