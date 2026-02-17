@@ -139,7 +139,7 @@ ON public.profiles (lower(handle));
 UPDATE public.profiles
 SET phone = NULL
 WHERE phone IS NOT NULL
-  AND phone !~ '^[0-9()+\\- ]{8,20}$';
+  AND phone !~ '^[0-9()+ -]{8,20}$';
 
 ALTER TABLE public.profiles
 DROP CONSTRAINT IF EXISTS profiles_phone_format;
@@ -148,7 +148,7 @@ ALTER TABLE public.profiles
 ADD CONSTRAINT profiles_phone_format
 CHECK (
   phone IS NULL
-  OR phone ~ '^[0-9()+\\- ]{8,20}$'
+  OR phone ~ '^[0-9()+ -]{8,20}$'
 );
 
 DELETE FROM public.profiles p

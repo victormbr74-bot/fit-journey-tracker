@@ -8,7 +8,7 @@ ALTER TABLE public.profiles
 ADD CONSTRAINT profiles_phone_format
 CHECK (
   phone IS NULL
-  OR phone ~ '^[0-9()+\\- ]{8,20}$'
+  OR phone ~ '^[0-9()+ -]{8,20}$'
 );
 
 CREATE TABLE IF NOT EXISTS public.social_global_state (
