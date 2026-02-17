@@ -648,10 +648,28 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         const profileForPenalty = profile || await fetchProfile();
         if (profileForPenalty) {
           const nextPoints = Math.max(0, (profileForPenalty.points || 0) - penaltyPoints);
-          const { error: penaltyError } = await updateProfile({ points: nextPoints });
+          const { data: updatedProfile, error: penaltyError } = await supabase
+            .from('profiles')
+            .update({
+              points: nextPoints,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', user.id)
+            .select()
+            .single();
           if (penaltyError) {
             console.error('Error applying challenge penalty points:', penaltyError);
             return;
+          }
+          if (updatedProfile) {
+            setProfile((previous) => {
+              if (!previous) return previous;
+              return {
+                ...previous,
+                points: updatedProfile.points || nextPoints,
+                updated_at: updatedProfile.updated_at || previous.updated_at,
+              };
+            });
           }
         }
       }
@@ -730,7 +748,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     } catch (assignChallengesError) {
       console.error('Unexpected error assigning recurring challenges:', assignChallengesError);
     }
-  }, [user, profile, fetchProfile, fetchUserChallenges, updateProfile]);
+  }, [user, profile, fetchProfile, fetchUserChallenges]);
 
   const createProfile = useCallback(
     async (profileData: Partial<UserProfile>) => {
