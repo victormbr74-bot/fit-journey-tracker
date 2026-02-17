@@ -24,6 +24,7 @@ import {
   Share2,
   Smile,
   Smartphone,
+  Square,
   Target,
   Trophy,
   Trash2,
@@ -192,6 +193,7 @@ const resolveGoalLabel = (goal: string | null | undefined) => {
 const NOTIFICATION_LIMIT = 120;
 const MAX_IMAGE_SIZE = 1080;
 const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
+const MAX_VOICE_RECORDING_SECONDS = 60;
 const GLOBAL_FEED_POST_LIMIT = 500;
 const GLOBAL_STORY_LIMIT = 500;
 const GLOBAL_FRIEND_REQUEST_LIMIT = 500;
@@ -596,6 +598,14 @@ const convertImageToDataUrl = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
+const blobToDataUrl = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Erro ao processar audio.'));
+    reader.readAsDataURL(blob);
+  });
+
 const dataUrlToFile = async (dataUrl: string, filename: string): Promise<File> => {
   const response = await fetch(dataUrl);
   const blob = await response.blob();
@@ -680,14 +690,24 @@ const formatChatPreview = (message: SocialChatMessage | null) => {
   if (!message) return 'Toque para iniciar conversa';
   if (message.postId) return message.sender === 'me' ? 'Voce compartilhou um post' : 'Compartilhou um post';
   if (message.storyId) return message.sender === 'me' ? 'Voce compartilhou uma story' : 'Compartilhou uma story';
-  if (message.attachmentDataUrl) {
+  if (message.attachmentName || message.attachmentDataUrl) {
+    const isAudio = (message.attachmentType || '').startsWith('audio/');
     const isImage = (message.attachmentType || '').startsWith('image/');
     if (message.sender === 'me') {
+      if (isAudio) return 'Voce enviou um audio';
       return isImage ? 'Voce enviou uma foto' : 'Voce enviou um arquivo';
     }
+    if (isAudio) return 'Enviou um audio';
     return isImage ? 'Enviou uma foto' : 'Enviou um arquivo';
   }
   return message.text.replace(/\s+/g, ' ').trim();
+};
+
+const formatDurationLabel = (seconds: number) => {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
 };
 
 const getOutgoingMessageStatus = (
@@ -770,6 +790,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [pendingChatAttachment, setPendingChatAttachment] = useState<ChatAttachmentDraft | null>(null);
   const [processingChatAttachment, setProcessingChatAttachment] = useState(false);
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [voiceRecordingSeconds, setVoiceRecordingSeconds] = useState(0);
   const [chatEventsLoaded, setChatEventsLoaded] = useState(false);
   const [isRegisteringPush, setIsRegisteringPush] = useState(false);
   const [pushNotificationsReady, setPushNotificationsReady] = useState(false);
@@ -811,6 +833,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const composerCameraInputRef = useRef<HTMLInputElement | null>(null);
   const chatAttachmentInputRef = useRef<HTMLInputElement | null>(null);
   const chatCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const voiceRecordingTimerRef = useRef<number | null>(null);
+  const voiceAutoStopTimeoutRef = useRef<number | null>(null);
   const chatMessagesContainerRef = useRef<HTMLDivElement | null>(null);
   const outgoingRequestStatusRef = useRef<Map<string, SocialFriendRequest['status']>>(new Map());
   const initializedOutgoingRequestStatusRef = useRef(false);
@@ -3389,7 +3416,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     if (!friend) return false;
 
     const fallbackText = attachment
-      ? ((attachment.type || '').startsWith('image/') ? 'Imagem enviada' : 'Arquivo enviado')
+      ? (attachment.type || '').startsWith('image/')
+        ? 'Imagem enviada'
+        : (attachment.type || '').startsWith('audio/')
+          ? 'Mensagem de voz'
+          : 'Arquivo enviado'
       : '';
     const messageText = text.trim() || fallbackText;
     if (!messageText) return false;
@@ -3500,6 +3531,138 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setChatInput((previous) => `${previous}${emoji}`);
   };
 
+  const stopVoiceRecordingTimers = () => {
+    if (voiceRecordingTimerRef.current) {
+      window.clearInterval(voiceRecordingTimerRef.current);
+      voiceRecordingTimerRef.current = null;
+    }
+    if (voiceAutoStopTimeoutRef.current) {
+      window.clearTimeout(voiceAutoStopTimeoutRef.current);
+      voiceAutoStopTimeoutRef.current = null;
+    }
+  };
+
+  const stopVoiceStreamTracks = () => {
+    if (!voiceStreamRef.current) return;
+    voiceStreamRef.current.getTracks().forEach((track) => track.stop());
+    voiceStreamRef.current = null;
+  };
+
+  const stopVoiceRecording = () => {
+    const recorder = voiceRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') return;
+    recorder.stop();
+  };
+
+  const startVoiceRecording = async () => {
+    if (isRecordingVoice) return;
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      toast.error('Seu dispositivo nao suporta gravacao de audio no navegador.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voiceStreamRef.current = stream;
+      voiceChunksRef.current = [];
+
+      const preferredMimeTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+      ];
+      const selectedMimeType = preferredMimeTypes.find(
+        (type) => typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(type)
+      );
+      const recorder = selectedMimeType
+        ? new MediaRecorder(stream, { mimeType: selectedMimeType })
+        : new MediaRecorder(stream);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        stopVoiceRecordingTimers();
+        setIsRecordingVoice(false);
+        setVoiceRecordingSeconds(0);
+
+        const audioBlob = new Blob(voiceChunksRef.current, {
+          type: recorder.mimeType || 'audio/webm',
+        });
+        voiceChunksRef.current = [];
+        voiceRecorderRef.current = null;
+        stopVoiceStreamTracks();
+
+        if (!audioBlob.size) {
+          toast.error('Nao foi possivel gerar o audio.');
+          return;
+        }
+
+        if (audioBlob.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
+          toast.error('Audio muito grande. Grave uma mensagem menor.');
+          return;
+        }
+
+        void (async () => {
+          try {
+            const dataUrl = await blobToDataUrl(audioBlob);
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            setPendingChatAttachment({
+              name: `voz-${timestamp}.webm`,
+              type: audioBlob.type || 'audio/webm',
+              dataUrl,
+            });
+            toast.success('Mensagem de voz pronta para envio.');
+          } catch (error) {
+            console.error('Erro ao processar audio:', error);
+            toast.error('Nao foi possivel processar o audio gravado.');
+          }
+        })();
+      };
+
+      recorder.onerror = (error) => {
+        console.error('Erro no gravador de audio:', error);
+        stopVoiceRecordingTimers();
+        setIsRecordingVoice(false);
+        setVoiceRecordingSeconds(0);
+        voiceRecorderRef.current = null;
+        voiceChunksRef.current = [];
+        stopVoiceStreamTracks();
+        toast.error('Nao foi possivel gravar audio neste momento.');
+      };
+
+      recorder.start(250);
+      voiceRecorderRef.current = recorder;
+      setIsRecordingVoice(true);
+      setVoiceRecordingSeconds(0);
+      setIsEmojiPickerOpen(false);
+
+      voiceRecordingTimerRef.current = window.setInterval(() => {
+        setVoiceRecordingSeconds((previous) => previous + 1);
+      }, 1000);
+
+      voiceAutoStopTimeoutRef.current = window.setTimeout(() => {
+        if (voiceRecorderRef.current && voiceRecorderRef.current.state !== 'inactive') {
+          voiceRecorderRef.current.stop();
+          toast.info('Gravacao encerrada apos 60 segundos.');
+        }
+      }, MAX_VOICE_RECORDING_SECONDS * 1000);
+    } catch (error) {
+      console.error('Erro ao iniciar gravacao de audio:', error);
+      stopVoiceRecordingTimers();
+      setIsRecordingVoice(false);
+      setVoiceRecordingSeconds(0);
+      voiceRecorderRef.current = null;
+      voiceChunksRef.current = [];
+      stopVoiceStreamTracks();
+      toast.error('Permita acesso ao microfone para enviar mensagem de voz.');
+    }
+  };
+
   const handleChatAttachmentSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -3560,6 +3723,54 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setPendingChatAttachment(null);
     setIsEmojiPickerOpen(false);
   };
+
+  const handlePrimaryChatAction = () => {
+    if (!activeChatFriendId) {
+      toast.error('Selecione um contato para conversar.');
+      return;
+    }
+
+    const hasChatPayload = Boolean(chatInput.trim() || pendingChatAttachment);
+    if (hasChatPayload) {
+      const text = chatInput.trim();
+      const wasSent = sendMessageToFollowedProfile(
+        activeChatFriendId,
+        text,
+        undefined,
+        undefined,
+        pendingChatAttachment || undefined
+      );
+      if (!wasSent) {
+        toast.error('Nao foi possivel enviar para esse perfil.');
+        return;
+      }
+      setChatInput('');
+      setPendingChatAttachment(null);
+      setIsEmojiPickerOpen(false);
+      return;
+    }
+
+    if (isRecordingVoice) {
+      stopVoiceRecording();
+      return;
+    }
+
+    void startVoiceRecording();
+  };
+
+  useEffect(() => {
+    return () => {
+      stopVoiceRecordingTimers();
+      if (voiceRecorderRef.current && voiceRecorderRef.current.state !== 'inactive') {
+        voiceRecorderRef.current.onstop = null;
+        voiceRecorderRef.current.onerror = null;
+        voiceRecorderRef.current.stop();
+      }
+      voiceRecorderRef.current = null;
+      voiceChunksRef.current = [];
+      stopVoiceStreamTracks();
+    };
+  }, []);
 
   const handleSharePostWithFriend = (
     post: SocialFeedPost,
@@ -4525,6 +4736,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                               ? getOutgoingMessageStatus(message, activeChatMessages)
                               : null;
                             const isImageAttachment = (message.attachmentType || '').startsWith('image/');
+                            const isAudioAttachment = (message.attachmentType || '').startsWith('audio/');
                             return (
                               <div
                                 key={message.id}
@@ -4547,6 +4759,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                           alt={message.attachmentName || 'Imagem anexada'}
                                           className="max-h-48 w-full rounded-md object-contain bg-secondary/40"
                                         />
+                                      ) : isAudioAttachment && message.attachmentDataUrl ? (
+                                        <audio controls src={message.attachmentDataUrl} className="w-full">
+                                          Seu navegador nao suporta audio HTML5.
+                                        </audio>
                                       ) : message.attachmentDataUrl ? (
                                         <a
                                           href={message.attachmentDataUrl}
@@ -4647,10 +4863,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                           </div>
                         )}
 
-                        {(processingChatAttachment || pendingChatAttachment) && (
+                        {(processingChatAttachment || pendingChatAttachment || isRecordingVoice) && (
                           <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-border/70 bg-background/80 px-3 py-1.5 text-xs">
                             <span className="line-clamp-1">
-                              {processingChatAttachment
+                              {isRecordingVoice
+                                ? `Gravando audio... ${formatDurationLabel(voiceRecordingSeconds)}`
+                                : processingChatAttachment
                                 ? 'Preparando anexo...'
                                 : pendingChatAttachment
                                   ? `Anexo pronto: ${pendingChatAttachment.name}`
@@ -4702,13 +4920,28 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                               <Camera className="h-4.5 w-4.5" />
                             </button>
                           </div>
-                          <Button type="submit" className="h-11 w-11 rounded-full p-0">
-                            {chatInput.trim() || pendingChatAttachment ? (
+                          <Button
+                            type="button"
+                            className={cn(
+                              'h-11 w-11 rounded-full p-0',
+                              isRecordingVoice && 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                            )}
+                            onClick={handlePrimaryChatAction}
+                          >
+                            {isRecordingVoice ? (
+                              <Square className="h-4 w-4" />
+                            ) : chatInput.trim() || pendingChatAttachment ? (
                               <Send className="h-4 w-4" />
                             ) : (
                               <Mic className="h-4.5 w-4.5" />
                             )}
-                            <span className="sr-only">Enviar mensagem</span>
+                            <span className="sr-only">
+                              {isRecordingVoice
+                                ? 'Parar gravacao de audio'
+                                : chatInput.trim() || pendingChatAttachment
+                                  ? 'Enviar mensagem'
+                                  : 'Gravar mensagem de voz'}
+                            </span>
                           </Button>
                         </form>
                       </div>

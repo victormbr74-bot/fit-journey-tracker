@@ -39,6 +39,7 @@ const App = () => (
                   <Route path="/running" element={<RunningPage />} />
                   <Route path="/assistant" element={<AssistantPage />} />
                   <Route path="/friends" element={<SocialSectionPage section="friends" />} />
+                  <Route path="/feed" element={<SocialSectionPage section="feed" />} />
                   <Route path="/search" element={<SocialSectionPage section="search" />} />
                   <Route path="/clans" element={<SocialSectionPage section="clans" />} />
                   <Route path="/chat" element={<SocialSectionPage section="chat" />} />

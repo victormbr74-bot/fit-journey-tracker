@@ -9,6 +9,7 @@ import {
   MapPin,
   Menu,
   MessageCircle,
+  ImagePlus,
   SquarePlay,
   Trophy,
   User,
@@ -26,6 +27,7 @@ import { disableSocialGlobalState, isSocialGlobalStateAvailable } from '@/lib/so
 
 const primaryNavItems = [
   { path: '/dashboard', label: 'Inicio', icon: Home },
+  { path: '/feed', label: 'Feed', icon: ImagePlus },
   { path: '/friends', label: 'Rede', icon: SquarePlay },
   { path: '/chat', label: 'Mensagens', icon: MessageCircle },
   { path: '/notifications', label: 'Atividade', icon: Heart },
