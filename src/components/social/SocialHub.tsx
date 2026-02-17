@@ -196,6 +196,7 @@ const resolveGoalLabel = (goal: string | null | undefined) => {
 const NOTIFICATION_LIMIT = 120;
 const MAX_IMAGE_SIZE = 1080;
 const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
+const MAX_GLOBAL_CHAT_ATTACHMENT_DATA_URL_LENGTH = 700000;
 const MAX_VOICE_RECORDING_SECONDS = 60;
 const DEFAULT_GOAL_TARGET = 1;
 const DEFAULT_GOAL_UNIT = 'tarefas';
@@ -623,16 +624,22 @@ const sanitizeChatEvents = (events: SocialGlobalChatEvent[]) =>
       const trimmedText = event.text?.toString().trim() || '';
       const attachmentDataUrl = event.attachmentDataUrl?.toString() || '';
       const attachmentName = event.attachmentName?.toString().trim() || '';
+      const attachmentType = event.attachmentType?.toString().trim() || '';
+      const shouldKeepAttachmentDataUrl =
+        attachmentType.startsWith('image/') &&
+        attachmentDataUrl.length > 0 &&
+        attachmentDataUrl.length <= MAX_GLOBAL_CHAT_ATTACHMENT_DATA_URL_LENGTH;
+      const safeAttachmentDataUrl = shouldKeepAttachmentDataUrl ? attachmentDataUrl : '';
 
-      if (!trimmedText && !attachmentDataUrl && !attachmentName) return null;
+      if (!trimmedText && !safeAttachmentDataUrl && !attachmentName) return null;
 
       return {
         ...event,
         text: trimmedText || 'Arquivo compartilhado',
         createdAt,
         attachmentName: attachmentName || undefined,
-        attachmentType: event.attachmentType?.toString().trim() || undefined,
-        attachmentDataUrl: attachmentDataUrl || undefined,
+        attachmentType: attachmentType || undefined,
+        attachmentDataUrl: safeAttachmentDataUrl || undefined,
       } as SocialGlobalChatEvent;
     })
     .filter((event): event is SocialGlobalChatEvent => Boolean(event))
@@ -4509,6 +4516,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       : '';
     const messageText = text.trim() || fallbackText;
     if (!messageText) return false;
+    const isImageAttachment = (attachment?.type || '').startsWith('image/');
+    const shouldShareAttachmentDataUrl =
+      Boolean(attachment?.dataUrl) &&
+      isImageAttachment &&
+      (attachment?.dataUrl.length || 0) <= MAX_GLOBAL_CHAT_ATTACHMENT_DATA_URL_LENGTH;
+    const globalAttachmentDataUrl = shouldShareAttachmentDataUrl ? attachment?.dataUrl : undefined;
 
     const createdAt = new Date().toISOString();
     appendChatMessage({
@@ -4536,7 +4549,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       storyId,
       attachmentName: attachment?.name,
       attachmentType: attachment?.type,
-      attachmentDataUrl: attachment?.dataUrl,
+      attachmentDataUrl: globalAttachmentDataUrl,
     });
 
     void notifyFitChatPush(friend.handle, messageText, postId, storyId);
@@ -6100,6 +6113,11 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                         <audio controls src={message.attachmentDataUrl} className="w-full">
                                           Seu navegador nao suporta audio HTML5.
                                         </audio>
+                                      ) : isAudioAttachment ? (
+                                        <p className="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                                          <Mic className="h-3.5 w-3.5" />
+                                          {message.attachmentName || 'Mensagem de voz'}
+                                        </p>
                                       ) : message.attachmentDataUrl ? (
                                         <a
                                           href={message.attachmentDataUrl}

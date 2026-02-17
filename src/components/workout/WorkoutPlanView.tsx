@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WorkoutPlan, WorkoutDay, Exercise } from '@/types/workout';
 import { useProfile } from '@/hooks/useProfile';
 import { generateWorkoutPlan } from '@/lib/workoutGenerator';
@@ -12,7 +12,10 @@ import { Label } from '@/components/ui/label';
 import { ExerciseVideo } from './ExerciseVideo';
 import { MusicPlayer } from './MusicPlayer';
 import { toast } from 'sonner';
-import { WORKOUT_PLAN_STORAGE_PREFIX } from '@/lib/storageKeys';
+import {
+  WORKOUT_COMPLETION_STORAGE_PREFIX,
+  WORKOUT_PLAN_STORAGE_PREFIX,
+} from '@/lib/storageKeys';
 import {
   Dumbbell,
   Clock,
@@ -23,6 +26,7 @@ import {
   Target,
   Sparkles,
   Plus,
+  CheckCircle2,
   Pencil,
   Trash2,
 } from 'lucide-react';
@@ -63,6 +67,28 @@ const parseNumber = (value: string, fallback: number): number => {
   const parsed = Number(value.replace(',', '.'));
   return Number.isFinite(parsed) ? parsed : fallback;
 };
+
+const getTodayIsoDate = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const WORKOUT_DAY_COMPLETION_POINTS = 20;
+
+interface WorkoutCompletionState {
+  date: string;
+  completedDayIds: string[];
+  awardedDayKeys: string[];
+}
+
+const createDefaultCompletionState = (date = getTodayIsoDate()): WorkoutCompletionState => ({
+  date,
+  completedDayIds: [],
+  awardedDayKeys: [],
+});
 
 const getGoalLabel = (goal: string): string => {
   if (goal === 'lose_weight') return 'Perder Peso';
@@ -140,7 +166,9 @@ function ExerciseCard({
 function DayCard({
   day,
   isExpanded,
+  isCompleted,
   onToggle,
+  onToggleCompleted,
   onAddExercise,
   onEditDay,
   onDeleteDay,
@@ -149,7 +177,9 @@ function DayCard({
 }: {
   day: WorkoutDay;
   isExpanded: boolean;
+  isCompleted: boolean;
   onToggle: () => void;
+  onToggleCompleted: () => void;
   onAddExercise: () => void;
   onEditDay: () => void;
   onDeleteDay: () => void;
@@ -166,6 +196,10 @@ function DayCard({
               <p className="text-sm text-muted-foreground mt-1">{day.focus}</p>
             </div>
             <div className="flex items-center gap-3">
+              <Badge variant={isCompleted ? 'default' : 'outline'} className="gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                {isCompleted ? 'Concluido' : 'Pendente'}
+              </Badge>
               <Badge variant="secondary" className="flex items-center gap-1">
                 <Clock className="w-3 h-3" />
                 {day.estimatedMinutes}min
@@ -178,6 +212,19 @@ function DayCard({
       {isExpanded && (
         <CardContent className="pt-0 space-y-3">
           <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={isCompleted ? 'secondary' : 'energy'}
+              size="sm"
+              className="gap-2"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleCompleted();
+              }}
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              {isCompleted ? 'Treino concluido' : 'Marcar concluido'}
+            </Button>
             <Button type="button" variant="outline" size="sm" className="gap-2" onClick={onAddExercise}>
               <Plus className="w-4 h-4" />
               Adicionar Exercício
@@ -221,11 +268,12 @@ function DayCard({
 }
 
 export function WorkoutPlanView() {
-  const { profile, loading } = useProfile();
+  const { profile, loading, updateProfile } = useProfile();
   const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null);
+  const [completionState, setCompletionState] = useState<WorkoutCompletionState>(createDefaultCompletionState);
 
   const [isDayDialogOpen, setIsDayDialogOpen] = useState(false);
   const [editingDayId, setEditingDayId] = useState<string | null>(null);
@@ -234,11 +282,64 @@ export function WorkoutPlanView() {
   const [isExerciseDialogOpen, setIsExerciseDialogOpen] = useState(false);
   const [editingExerciseIndex, setEditingExerciseIndex] = useState<number | null>(null);
   const [exerciseForm, setExerciseForm] = useState<ExerciseFormState>(buildDefaultExerciseForm());
+  const profilePointsRef = useRef(profile?.points || 0);
+  const profileId = profile?.id || '';
 
   const storageKey = useMemo(
-    () => (profile ? `${WORKOUT_PLAN_STORAGE_PREFIX}${profile.id}` : null),
-    [profile?.id]
+    () => (profileId ? `${WORKOUT_PLAN_STORAGE_PREFIX}${profileId}` : null),
+    [profileId]
   );
+  const completionStorageKey = useMemo(
+    () => (profileId ? `${WORKOUT_COMPLETION_STORAGE_PREFIX}${profileId}` : null),
+    [profileId]
+  );
+
+  useEffect(() => {
+    profilePointsRef.current = profile?.points || 0;
+  }, [profile?.points]);
+
+  useEffect(() => {
+    if (!completionStorageKey) {
+      setCompletionState(createDefaultCompletionState());
+      return;
+    }
+
+    const today = getTodayIsoDate();
+    const stored = window.localStorage.getItem(completionStorageKey);
+    if (!stored) {
+      setCompletionState(createDefaultCompletionState(today));
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as Partial<WorkoutCompletionState>;
+      const storedDate = typeof parsed.date === 'string' ? parsed.date : today;
+      if (storedDate !== today) {
+        setCompletionState(createDefaultCompletionState(today));
+        return;
+      }
+
+      const completedDayIds = Array.isArray(parsed.completedDayIds)
+        ? parsed.completedDayIds.filter((item): item is string => typeof item === 'string' && Boolean(item))
+        : [];
+      const awardedDayKeys = Array.isArray(parsed.awardedDayKeys)
+        ? parsed.awardedDayKeys.filter((item): item is string => typeof item === 'string' && Boolean(item))
+        : [];
+      setCompletionState({
+        date: today,
+        completedDayIds: Array.from(new Set(completedDayIds)),
+        awardedDayKeys: Array.from(new Set(awardedDayKeys)),
+      });
+    } catch (error) {
+      console.error('Erro ao carregar progresso de treino:', error);
+      setCompletionState(createDefaultCompletionState(today));
+    }
+  }, [completionStorageKey]);
+
+  useEffect(() => {
+    if (!completionStorageKey) return;
+    window.localStorage.setItem(completionStorageKey, JSON.stringify(completionState));
+  }, [completionState, completionStorageKey]);
 
   useEffect(() => {
     if (!storageKey) {
@@ -303,6 +404,95 @@ export function WorkoutPlanView() {
       setExpandedDay(plan.days[0]?.id || null);
     }
   }, [plan, expandedDay]);
+
+  useEffect(() => {
+    if (!plan) return;
+    const validDayIds = new Set(plan.days.map((day) => day.id));
+    setCompletionState((current) => {
+      const nextCompletedDayIds = current.completedDayIds.filter((dayId) => validDayIds.has(dayId));
+      const nextAwardedDayKeys = current.awardedDayKeys.filter((key) => {
+        const [, dayId] = key.split(':');
+        return validDayIds.has(dayId);
+      });
+
+      if (
+        nextCompletedDayIds.length === current.completedDayIds.length &&
+        nextAwardedDayKeys.length === current.awardedDayKeys.length
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        completedDayIds: nextCompletedDayIds,
+        awardedDayKeys: nextAwardedDayKeys,
+      };
+    });
+  }, [plan]);
+
+  const applyWorkoutPoints = useCallback(
+    async (delta: number, reason: string) => {
+      if (!profile || !delta) return;
+
+      const previousPoints = profilePointsRef.current;
+      const nextPoints = Math.max(0, previousPoints + delta);
+      profilePointsRef.current = nextPoints;
+
+      const { data, error } = await updateProfile({ points: nextPoints });
+      if (error) {
+        profilePointsRef.current = profile.points || previousPoints;
+        console.error('Erro ao atualizar pontuacao do treino:', error);
+        toast.error('Nao foi possivel atualizar sua pontuacao agora.');
+        return;
+      }
+
+      profilePointsRef.current = data?.points || nextPoints;
+      if (delta > 0) {
+        toast.success(`${reason}. +${delta} pts`);
+      } else {
+        toast.info(`${reason}. ${delta} pts`);
+      }
+    },
+    [profile, updateProfile]
+  );
+
+  const handleToggleDayCompleted = (dayId: string) => {
+    const today = getTodayIsoDate();
+    let awardedNow = false;
+
+    setCompletionState((current) => {
+      const normalizedCurrent =
+        current.date === today
+          ? current
+          : createDefaultCompletionState(today);
+      const isCompleted = normalizedCurrent.completedDayIds.includes(dayId);
+      if (isCompleted) {
+        return {
+          ...normalizedCurrent,
+          completedDayIds: normalizedCurrent.completedDayIds.filter((id) => id !== dayId),
+        };
+      }
+
+      const awardKey = `${today}:${dayId}`;
+      const hasAwarded = normalizedCurrent.awardedDayKeys.includes(awardKey);
+      if (!hasAwarded) {
+        awardedNow = true;
+      }
+      return {
+        ...normalizedCurrent,
+        completedDayIds: [...normalizedCurrent.completedDayIds, dayId],
+        awardedDayKeys: hasAwarded
+          ? normalizedCurrent.awardedDayKeys
+          : [...normalizedCurrent.awardedDayKeys, awardKey],
+      };
+    });
+
+    if (awardedNow) {
+      void applyWorkoutPoints(WORKOUT_DAY_COMPLETION_POINTS, 'Treino concluido');
+    } else {
+      toast.success('Treino marcado como concluido.');
+    }
+  };
 
   const handleGenerate = () => {
     if (!profile) return;
@@ -679,7 +869,9 @@ export function WorkoutPlanView() {
                 key={day.id}
                 day={day}
                 isExpanded={expandedDay === day.id}
+                isCompleted={completionState.completedDayIds.includes(day.id)}
                 onToggle={() => setExpandedDay(expandedDay === day.id ? null : day.id)}
+                onToggleCompleted={() => handleToggleDayCompleted(day.id)}
                 onAddExercise={() => openAddExerciseDialog(day.id)}
                 onEditDay={() => openEditDayDialog(day)}
                 onDeleteDay={() => handleDeleteDay(day.id)}
