@@ -127,6 +127,17 @@ export interface SocialNotification {
   description: string;
   createdAt: string;
   read: boolean;
+  target?: SocialNotificationTarget;
+}
+
+export interface SocialNotificationTarget {
+  section?: SocialSection;
+  path?: string;
+  friendId?: string;
+  friendHandle?: string;
+  messageId?: string;
+  postId?: string;
+  storyId?: string;
 }
 
 export interface SocialChatMessage {

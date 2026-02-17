@@ -1,4 +1,5 @@
 import { ChangeEvent, FormEvent, SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Bell,
@@ -66,6 +67,7 @@ import {
   SocialFriendRequest,
   SocialGlobalChatEvent,
   SocialNotification,
+  SocialNotificationTarget,
   SocialNotificationType,
   SocialPostComment,
   SocialSection,
@@ -260,6 +262,123 @@ const CHAT_QUICK_EMOJIS = [
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const sanitizeHandleInput = (value: string) => sanitizeHandleBody(value);
 const normalizePhoneDigits = (value: string) => value.replace(/\D+/g, '');
+const SOCIAL_SECTION_PATH: Record<SocialSection, string> = {
+  search: '/search',
+  friends: '/friends',
+  clans: '/clans',
+  chat: '/chat',
+  feed: '/feed',
+  notifications: '/notifications',
+};
+const DEFAULT_NOTIFICATION_SECTION_BY_TYPE: Record<SocialNotificationType, SocialSection> = {
+  friend: 'notifications',
+  clan: 'clans',
+  goal: 'clans',
+  challenge: 'clans',
+  post: 'feed',
+  chat: 'chat',
+  system: 'notifications',
+};
+const isSocialNotificationType = (value: unknown): value is SocialNotificationType =>
+  value === 'friend' ||
+  value === 'clan' ||
+  value === 'goal' ||
+  value === 'challenge' ||
+  value === 'post' ||
+  value === 'chat' ||
+  value === 'system';
+const isSocialSection = (value: unknown): value is SocialSection =>
+  value === 'search' ||
+  value === 'friends' ||
+  value === 'clans' ||
+  value === 'chat' ||
+  value === 'feed' ||
+  value === 'notifications';
+const sanitizeNotificationTarget = (target: unknown): SocialNotificationTarget | undefined => {
+  if (!target || typeof target !== 'object') return undefined;
+  const rawTarget = target as Partial<SocialNotificationTarget>;
+  const section = isSocialSection(rawTarget.section) ? rawTarget.section : undefined;
+  const path =
+    typeof rawTarget.path === 'string' && rawTarget.path.trim().startsWith('/')
+      ? rawTarget.path.trim()
+      : undefined;
+  const friendId =
+    typeof rawTarget.friendId === 'string' && rawTarget.friendId.trim()
+      ? rawTarget.friendId.trim()
+      : undefined;
+  const normalizedFriendHandle = normalizeHandle(
+    typeof rawTarget.friendHandle === 'string' ? rawTarget.friendHandle : ''
+  );
+  const friendHandle = normalizedFriendHandle ? toHandle(normalizedFriendHandle) : undefined;
+  const messageId =
+    typeof rawTarget.messageId === 'string' && rawTarget.messageId.trim()
+      ? rawTarget.messageId.trim()
+      : undefined;
+  const postId =
+    typeof rawTarget.postId === 'string' && rawTarget.postId.trim()
+      ? rawTarget.postId.trim()
+      : undefined;
+  const storyId =
+    typeof rawTarget.storyId === 'string' && rawTarget.storyId.trim()
+      ? rawTarget.storyId.trim()
+      : undefined;
+
+  if (!section && !path && !friendId && !friendHandle && !messageId && !postId && !storyId) {
+    return undefined;
+  }
+
+  return {
+    section,
+    path,
+    friendId,
+    friendHandle,
+    messageId,
+    postId,
+    storyId,
+  };
+};
+const sanitizeNotifications = (notifications: unknown): SocialNotification[] => {
+  if (!Array.isArray(notifications)) return [];
+
+  return notifications
+    .map((notification, index) => {
+      if (!notification || typeof notification !== 'object') return null;
+      const rawNotification = notification as Partial<SocialNotification>;
+      const createdAt =
+        isValidIsoDate(rawNotification.createdAt) ? rawNotification.createdAt : new Date().toISOString();
+      const title = rawNotification.title?.toString().trim() || 'Atualizacao';
+      const description = rawNotification.description?.toString().trim() || 'Toque para abrir';
+
+      return {
+        id:
+          typeof rawNotification.id === 'string' && rawNotification.id.trim()
+            ? rawNotification.id.trim()
+            : `notification-${index}-${createId()}`,
+        type: isSocialNotificationType(rawNotification.type) ? rawNotification.type : 'system',
+        title,
+        description,
+        createdAt,
+        read: Boolean(rawNotification.read),
+        target: sanitizeNotificationTarget(rawNotification.target),
+      } as SocialNotification;
+    })
+    .filter((notification): notification is SocialNotification => Boolean(notification))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, NOTIFICATION_LIMIT);
+};
+const buildChatEntryPath = (options?: { friendHandle?: string; messageId?: string }) => {
+  const params = new URLSearchParams();
+  const normalizedFriendHandle = normalizeHandle(options?.friendHandle || '');
+  if (normalizedFriendHandle) {
+    params.set('friend', toHandle(normalizedFriendHandle));
+  }
+  const messageId = options?.messageId?.trim();
+  if (messageId) {
+    params.set('message', messageId);
+  }
+  const queryString = params.toString();
+  return queryString ? `${FIT_CHAT_ENTRY_PATH}?${queryString}` : FIT_CHAT_ENTRY_PATH;
+};
 const isValidPhoneInput = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed || !PHONE_REGEX.test(trimmed)) return false;
@@ -1192,6 +1311,8 @@ const getOutgoingMessageStatus = (
 
 export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs = true }: SocialHubProps) {
   const { updateProfile } = useProfile();
+  const navigate = useNavigate();
+  const location = useLocation();
   const storageKey = useMemo(() => `${SOCIAL_HUB_STORAGE_PREFIX}${profile.id}`, [profile.id]);
   const seenChatEventsStorageKey = useMemo(
     () => `${SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX}${profile.id}`,
@@ -1273,6 +1394,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [challengeDueDate, setChallengeDueDate] = useState('');
 
   const [activeChatFriendId, setActiveChatFriendId] = useState('');
+  const [pendingChatMessageId, setPendingChatMessageId] = useState('');
+  const [highlightedChatMessageId, setHighlightedChatMessageId] = useState('');
   const [feedShareFriendId, setFeedShareFriendId] = useState('');
   const [chatInput, setChatInput] = useState('');
   const [pendingChatAttachment, setPendingChatAttachment] = useState<ChatAttachmentDraft | null>(null);
@@ -1335,6 +1458,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const voiceRecordingTimerRef = useRef<number | null>(null);
   const voiceAutoStopTimeoutRef = useRef<number | null>(null);
   const chatMessagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const chatMessageElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const chatMessageHighlightTimeoutRef = useRef<number | null>(null);
   const outgoingRequestStatusRef = useRef<Map<string, SocialFriendRequest['status']>>(new Map());
   const initializedOutgoingRequestStatusRef = useRef(false);
   const applyingRemoteSnapshotRef = useRef(false);
@@ -2029,7 +2154,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         clans: sanitizeClans(parsed.clans, profile),
         posts: [],
         chatMessages: keepChatHistory ? sanitizeChatMessages(parsed.chatMessages) : [],
-        notifications: parsed.notifications || [],
+        notifications: sanitizeNotifications(parsed.notifications),
       });
       if (legacyPosts.length) {
         setGlobalPosts((previous) => mergePosts(previous, legacyPosts));
@@ -3287,6 +3412,31 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   }, [activeChatFriendId, pendingChatFriendId, socialState.friends]);
 
   useEffect(() => {
+    if (location.pathname !== FIT_CHAT_ENTRY_PATH) return;
+
+    const params = new URLSearchParams(location.search);
+    const normalizedFriendHandle = normalizeHandle(params.get('friend') || '');
+    const targetMessageId = (params.get('message') || '').trim();
+
+    if (normalizedFriendHandle) {
+      const targetFriend = friendsByHandle.get(normalizedFriendHandle);
+      if (targetFriend) {
+        setPendingChatFriendId(targetFriend.id);
+        setActiveChatFriendId(targetFriend.id);
+        if (isMobile) {
+          setShowChatListOnMobile(false);
+        }
+      }
+    }
+
+    if (targetMessageId) {
+      setPendingChatMessageId((previous) => (
+        previous === targetMessageId ? previous : targetMessageId
+      ));
+    }
+  }, [friendsByHandle, isMobile, location.pathname, location.search]);
+
+  useEffect(() => {
     if (!chatEventsLoaded) return;
 
     const unseenIncomingEvents = globalChatEvents.filter(
@@ -3365,6 +3515,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           type: 'chat',
           title: `Nova mensagem de ${sender?.name || 'Contato'}`,
           description: message.text,
+          target: {
+            section: 'chat',
+            path: FIT_CHAT_ENTRY_PATH,
+            friendId: message.friendId,
+            friendHandle: sender?.handle,
+            messageId: message.id,
+            postId: message.postId,
+            storyId: message.storyId,
+          },
         });
       });
     }
@@ -3409,8 +3568,50 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   useEffect(() => {
     const container = chatMessagesContainerRef.current;
     if (!container) return;
+    if (pendingChatMessageId) return;
     container.scrollTop = container.scrollHeight;
-  }, [activeChatMessages]);
+  }, [activeChatMessages, pendingChatMessageId]);
+
+  useEffect(() => {
+    if (!pendingChatMessageId) return;
+    if (activeSection !== 'chat') return;
+
+    const targetElement = chatMessageElementsRef.current.get(pendingChatMessageId);
+    if (!targetElement) return;
+
+    targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedChatMessageId(pendingChatMessageId);
+    setPendingChatMessageId('');
+  }, [activeSection, activeChatMessages, pendingChatMessageId]);
+
+  useEffect(() => {
+    if (!pendingChatMessageId) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setPendingChatMessageId('');
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [pendingChatMessageId]);
+
+  useEffect(() => {
+    if (!highlightedChatMessageId) return;
+    if (chatMessageHighlightTimeoutRef.current !== null) {
+      window.clearTimeout(chatMessageHighlightTimeoutRef.current);
+    }
+
+    chatMessageHighlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedChatMessageId('');
+      chatMessageHighlightTimeoutRef.current = null;
+    }, 1800);
+
+    return () => {
+      if (chatMessageHighlightTimeoutRef.current !== null) {
+        window.clearTimeout(chatMessageHighlightTimeoutRef.current);
+        chatMessageHighlightTimeoutRef.current = null;
+      }
+    };
+  }, [highlightedChatMessageId]);
 
   const handleEnableBrowserNotifications = async () => {
     if (isRegisteringPush) return;
@@ -4801,7 +5002,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         text: messagePreview,
         post_id: postId || null,
         story_id: storyId || null,
-        target_path: FIT_CHAT_ENTRY_PATH,
+        target_path: buildChatEntryPath({ friendHandle: profileHandle }),
       },
     });
 
@@ -5251,6 +5452,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       type: 'chat',
       title: 'Post compartilhado',
       description: `${friend?.name || 'Contato'} recebeu um compartilhamento do feed.`,
+      target: {
+        section: 'chat',
+        path: FIT_CHAT_ENTRY_PATH,
+        friendId: resolvedFriendId,
+        friendHandle: friend?.handle,
+        postId: post.id,
+      },
     }, false);
   };
 
@@ -5288,6 +5496,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       type: 'chat',
       title: 'Story compartilhada',
       description: `${friend?.name || 'Contato'} recebeu uma story sua.`,
+      target: {
+        section: 'chat',
+        path: FIT_CHAT_ENTRY_PATH,
+        friendId: resolvedFriendId,
+        friendHandle: friend?.handle,
+        storyId: story.id,
+      },
     }, false);
   };
 
@@ -5426,6 +5641,57 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         notification.id === notificationId ? { ...notification, read: true } : notification
       ),
     }));
+  };
+
+  const handleOpenNotification = (notification: SocialNotification) => {
+    handleMarkNotificationAsRead(notification.id);
+
+    const targetSection =
+      notification.target?.section || DEFAULT_NOTIFICATION_SECTION_BY_TYPE[notification.type];
+    const targetPath = notification.target?.path || SOCIAL_SECTION_PATH[targetSection];
+
+    if (targetSection === 'chat') {
+      const targetFromId = notification.target?.friendId;
+      const targetFromHandle = normalizeHandle(notification.target?.friendHandle || '');
+      const targetFriendId = targetFromId && friendsById.has(targetFromId)
+        ? targetFromId
+        : targetFromHandle
+          ? friendsByHandle.get(targetFromHandle)?.id || ''
+          : '';
+      const targetFriendHandle = targetFromHandle
+        ? toHandle(targetFromHandle)
+        : targetFriendId
+          ? friendsById.get(targetFriendId)?.handle
+          : undefined;
+      const targetMessageId = notification.target?.messageId?.trim() || '';
+
+      if (targetFriendId) {
+        setPendingChatFriendId(targetFriendId);
+        setActiveChatFriendId(targetFriendId);
+      }
+      if (isMobile && targetFriendId) {
+        setShowChatListOnMobile(false);
+      }
+      if (targetMessageId) {
+        setPendingChatMessageId(targetMessageId);
+      }
+
+      if (targetFriendHandle || targetMessageId) {
+        navigate(
+          buildChatEntryPath({
+            friendHandle: targetFriendHandle,
+            messageId: targetMessageId || undefined,
+          })
+        );
+        return;
+      }
+
+      navigate(targetPath || FIT_CHAT_ENTRY_PATH);
+      return;
+    }
+
+    setActiveSection(targetSection);
+    navigate(targetPath);
   };
 
   const handleClearNotifications = () => {
@@ -6449,6 +6715,14 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                             return (
                               <div
                                 key={message.id}
+                                ref={(node) => {
+                                  if (node) {
+                                    chatMessageElementsRef.current.set(message.id, node);
+                                    return;
+                                  }
+                                  chatMessageElementsRef.current.delete(message.id);
+                                }}
+                                data-chat-message-id={message.id}
                                 className={cn('flex', isMine ? 'justify-end' : 'justify-start')}
                               >
                                 <div
@@ -6456,7 +6730,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                     'max-w-[85%] rounded-xl px-3 py-2 shadow-sm md:max-w-[72%]',
                                     isMine
                                       ? 'rounded-br-sm border border-primary/35 bg-primary/15 text-foreground'
-                                      : 'rounded-bl-sm border border-border/70 bg-card text-foreground'
+                                      : 'rounded-bl-sm border border-border/70 bg-card text-foreground',
+                                    message.id === highlightedChatMessageId &&
+                                      'ring-2 ring-primary/50 ring-offset-2 ring-offset-background'
                                   )}
                                 >
                                   <p className="whitespace-pre-wrap break-words text-sm">{message.text}</p>
@@ -7219,7 +7495,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                 <button
                   key={notification.id}
                   type="button"
-                  onClick={() => handleMarkNotificationAsRead(notification.id)}
+                  onClick={() => handleOpenNotification(notification)}
                   className={`w-full rounded-lg border p-3 text-left transition-colors ${
                     notification.read ? 'border-border/60 bg-card/30' : 'border-primary/40 bg-primary/10'
                   }`}
