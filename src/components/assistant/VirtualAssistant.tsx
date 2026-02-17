@@ -8,6 +8,7 @@ import {
   ASSISTANT_REMINDER_STORAGE_PREFIX,
   ASSISTANT_STATE_STORAGE_PREFIX,
   DIET_PLAN_STORAGE_PREFIX,
+  SOCIAL_PERSONAL_GOAL_REQUEST_STORAGE_PREFIX,
   WORKOUT_PLAN_STORAGE_PREFIX,
 } from '@/lib/storageKeys';
 import { WorkoutPlan } from '@/types/workout';
@@ -876,6 +877,24 @@ const buildRecentHistory = (): string =>
         .join('\n');
 
       return respond(`Seus desafios pendentes:\n${list}\nSe quiser, diga: concluir desafio.`);
+    }
+
+    if (containsAny(normalizedMessage, ['meta']) && containsAny(normalizedMessage, ['cla', 'clan'])) {
+      if (!profile) {
+        return respond('Preciso do seu perfil para registrar a meta no CLA.');
+      }
+
+      window.localStorage.setItem(
+        `${SOCIAL_PERSONAL_GOAL_REQUEST_STORAGE_PREFIX}${profile.id}`,
+        JSON.stringify({
+          requestText: message.trim(),
+          createdAt: nowIso(),
+        })
+      );
+
+      return respond(
+        'Perfeito. Registrei sua solicitacao de meta para CLA. Abra Comunidade > CLA e toque em "Personal criar meta".'
+      );
     }
 
     if (

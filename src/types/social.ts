@@ -34,6 +34,12 @@ export interface SocialClanGoal {
   unit: string;
   dueDate: string;
   completed: boolean;
+  pointsAwarded?: number;
+  pointsPenalty?: number;
+  scoredAt?: string;
+  penalizedAt?: string;
+  createdBy?: 'user' | 'personal';
+  requestText?: string;
 }
 
 export interface SocialClanChallenge {

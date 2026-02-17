@@ -41,6 +41,7 @@ import {
   SOCIAL_GLOBAL_FEED_STORAGE_KEY,
   SOCIAL_GLOBAL_FRIEND_REQUESTS_STORAGE_KEY,
   SOCIAL_GLOBAL_STORIES_STORAGE_KEY,
+  SOCIAL_PERSONAL_GOAL_REQUEST_STORAGE_PREFIX,
   SOCIAL_PROFILE_STORAGE_PREFIX,
   SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX,
   SOCIAL_SEEN_FRIEND_REQUESTS_STORAGE_PREFIX,
@@ -89,6 +90,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { disableSocialGlobalState, isSocialGlobalStateAvailable } from '@/lib/socialSyncCapability';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useProfile } from '@/hooks/useProfile';
 
 interface SocialHubProps {
   profile: UserProfile;
@@ -194,6 +196,9 @@ const NOTIFICATION_LIMIT = 120;
 const MAX_IMAGE_SIZE = 1080;
 const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_VOICE_RECORDING_SECONDS = 60;
+const DEFAULT_GOAL_TARGET = 1;
+const DEFAULT_GOAL_UNIT = 'tarefas';
+const DEFAULT_GOAL_AUTO_DUE_DAYS = 7;
 const GLOBAL_FEED_POST_LIMIT = 500;
 const GLOBAL_STORY_LIMIT = 500;
 const GLOBAL_FRIEND_REQUEST_LIMIT = 500;
@@ -262,6 +267,108 @@ const formatDate = (isoDate: string) => {
   const date = new Date(isoDate);
   if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleDateString('pt-BR');
+};
+
+const toDateInputValue = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const normalizeGoalUnit = (value: string) => {
+  const raw = value.trim().toLowerCase();
+  if (!raw) return DEFAULT_GOAL_UNIT;
+  if (raw.startsWith('km') || raw.includes('quilomet')) return 'km';
+  if (raw.startsWith('trein')) return 'treinos';
+  if (raw.startsWith('dia')) return 'dias';
+  if (raw.startsWith('hora')) return 'horas';
+  if (raw.startsWith('min')) return 'minutos';
+  if (raw.startsWith('pass')) return 'passos';
+  if (raw.startsWith('cal')) return 'calorias';
+  if (raw.startsWith('repet') || raw.startsWith('rep')) return 'repeticoes';
+  if (raw.startsWith('seri')) return 'series';
+  if (raw.startsWith('lit')) return 'litros';
+  if (raw.startsWith('cop')) return 'copos';
+  return raw;
+};
+
+const calculateGoalAwardPoints = (targetValue: number) => {
+  const safeTarget = Math.max(1, Math.round(targetValue));
+  return Math.max(15, Math.min(250, 10 + safeTarget * 4));
+};
+
+const calculateGoalPenaltyPoints = (awardPoints: number) => {
+  const safeAward = Math.max(1, Math.round(awardPoints));
+  return Math.max(5, Math.round(safeAward * 0.5));
+};
+
+const resolveGoalDueTimestamp = (dueDate: string) => {
+  if (!dueDate) return null;
+  const parsedDate = new Date(dueDate);
+  if (Number.isNaN(parsedDate.getTime())) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+    parsedDate.setHours(23, 59, 59, 999);
+  }
+  return parsedDate.getTime();
+};
+
+interface ParsedGoalRequest {
+  title: string;
+  targetValue: number;
+  unit: string;
+  dueDate: string;
+}
+
+const parseGoalRequest = (requestText: string): ParsedGoalRequest => {
+  const trimmed = requestText.trim();
+  const normalized = trimmed.replace(/\s+/g, ' ');
+  const fallbackTitle = normalized || 'Meta personalizada';
+
+  const targetMatch = normalized.match(
+    /(\d+(?:[.,]\d+)?)\s*(km|quilometros?|treinos?|dias?|min(?:utos?)?|horas?|passos?|calorias?|series?|repeticoes?|reps?|vezes?|copos?|litros?)/i
+  );
+  const numericTarget = targetMatch?.[1]?.replace(',', '.');
+  const parsedTarget = numericTarget ? Number.parseFloat(numericTarget) : Number.NaN;
+  const targetValue = Number.isFinite(parsedTarget) && parsedTarget > 0
+    ? Math.max(1, Math.round(parsedTarget))
+    : DEFAULT_GOAL_TARGET;
+  const unit = normalizeGoalUnit(targetMatch?.[2] || DEFAULT_GOAL_UNIT);
+
+  let dueDate = '';
+  const isoDateMatch = normalized.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  if (isoDateMatch?.[1]) {
+    dueDate = isoDateMatch[1];
+  } else {
+    const brDateMatch = normalized.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
+    if (brDateMatch) {
+      const day = String(Number(brDateMatch[1])).padStart(2, '0');
+      const month = String(Number(brDateMatch[2])).padStart(2, '0');
+      const year = brDateMatch[3];
+      dueDate = `${year}-${month}-${day}`;
+    } else {
+      const daysFromNowMatch = normalized.match(/\bem\s+(\d+)\s+dias?\b/i);
+      const weeksFromNowMatch = normalized.match(/\bem\s+(\d+)\s+semanas?\b/i);
+      const daysToAdd =
+        daysFromNowMatch?.[1]
+          ? Number(daysFromNowMatch[1])
+          : weeksFromNowMatch?.[1]
+            ? Number(weeksFromNowMatch[1]) * 7
+            : /\bamanh[aã]\b/i.test(normalized)
+              ? 1
+              : DEFAULT_GOAL_AUTO_DUE_DAYS;
+      const baseDate = new Date();
+      baseDate.setDate(baseDate.getDate() + Math.max(1, daysToAdd));
+      dueDate = toDateInputValue(baseDate);
+    }
+  }
+
+  return {
+    title: fallbackTitle.slice(0, 120),
+    targetValue,
+    unit,
+    dueDate,
+  };
 };
 
 const isStoryActive = (story: SocialStory) => new Date(story.expiresAt).getTime() > Date.now();
@@ -722,6 +829,7 @@ const getOutgoingMessageStatus = (
 };
 
 export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs = true }: SocialHubProps) {
+  const { updateProfile } = useProfile();
   const storageKey = useMemo(() => `${SOCIAL_HUB_STORAGE_PREFIX}${profile.id}`, [profile.id]);
   const seenChatEventsStorageKey = useMemo(
     () => `${SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX}${profile.id}`,
@@ -729,6 +837,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   );
   const seenFriendRequestsStorageKey = useMemo(
     () => `${SOCIAL_SEEN_FRIEND_REQUESTS_STORAGE_PREFIX}${profile.id}`,
+    [profile.id]
+  );
+  const personalGoalRequestStorageKey = useMemo(
+    () => `${SOCIAL_PERSONAL_GOAL_REQUEST_STORAGE_PREFIX}${profile.id}`,
     [profile.id]
   );
   const chatSettingsStorageKey = useMemo(
@@ -777,6 +889,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [goalTargetValue, setGoalTargetValue] = useState('10');
   const [goalUnit, setGoalUnit] = useState('treinos');
   const [goalDueDate, setGoalDueDate] = useState('');
+  const [goalRequestText, setGoalRequestText] = useState('');
 
   const [challengeClanId, setChallengeClanId] = useState('');
   const [challengeTitle, setChallengeTitle] = useState('');
@@ -844,6 +957,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const applyingRemoteSnapshotRef = useRef(false);
   const lastGlobalSnapshotHashRef = useRef('');
   const notifiedRemoteSyncUnavailableRef = useRef(false);
+  const profilePointsRef = useRef(profile.points || 0);
 
   const triggerSystemNotification = useCallback(async (title: string, description: string) => {
     if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
@@ -902,6 +1016,34 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       void triggerSystemNotification(nextNotification.title, nextNotification.description);
     }
   }, [triggerSystemNotification]);
+
+  useEffect(() => {
+    profilePointsRef.current = profile.points || 0;
+  }, [profile.points]);
+
+  const applyProfilePointsDelta = useCallback(async (delta: number, reason: string) => {
+    if (!delta) return;
+
+    const currentPoints = profilePointsRef.current;
+    const nextPoints = Math.max(0, currentPoints + delta);
+    profilePointsRef.current = nextPoints;
+
+    const { data, error } = await updateProfile({ points: nextPoints });
+    if (error) {
+      console.error('Erro ao atualizar pontuacao do perfil:', error);
+      profilePointsRef.current = profile.points || currentPoints;
+      toast.error('Nao foi possivel atualizar sua pontuacao agora.');
+      return;
+    }
+
+    profilePointsRef.current = data?.points || nextPoints;
+    if (delta > 0) {
+      toast.success(`${reason} (+${delta} pts)`);
+      return;
+    }
+
+    toast.info(`${reason} (${delta} pts)`);
+  }, [profile.points, updateProfile]);
 
   const registerPushSubscriptionForCurrentDevice = useCallback(async (
     options?: { requestPermission?: boolean; notifyOnError?: boolean }
@@ -1555,6 +1697,26 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       setChallengeClanId(socialState.clans[0].id);
     }
   }, [socialState.clans, goalClanId, challengeClanId]);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(personalGoalRequestStorageKey);
+    if (!stored) return;
+
+    try {
+      const parsed = JSON.parse(stored) as { requestText?: string };
+      if (typeof parsed.requestText === 'string' && parsed.requestText.trim()) {
+        setGoalRequestText(parsed.requestText.trim());
+        if (!goalClanId && socialState.clans.length) {
+          setGoalClanId(socialState.clans[0].id);
+        }
+        toast.info('Solicitacao do Personal carregada na criacao de meta do CLA.');
+      }
+    } catch (error) {
+      console.error('Erro ao ler solicitacao do Personal para meta:', error);
+    } finally {
+      window.localStorage.removeItem(personalGoalRequestStorageKey);
+    }
+  }, [goalClanId, personalGoalRequestStorageKey, socialState.clans]);
 
   useEffect(() => {
     if (!socialState.friends.length) {
@@ -2851,6 +3013,56 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     toast.success('CLA criado.');
   };
 
+  const createClanGoal = (
+    clanId: string,
+    options: {
+      title: string;
+      targetValue: number;
+      unit: string;
+      dueDate: string;
+      createdBy: 'user' | 'personal';
+      requestText?: string;
+    }
+  ) => {
+    if (!clanId) return false;
+    const targetClan = socialState.clans.find((clan) => clan.id === clanId);
+    if (!targetClan) return false;
+
+    const sanitizedTitle = options.title.trim().slice(0, 120);
+    const sanitizedTargetValue = Math.max(1, Math.round(options.targetValue));
+    const normalizedUnit = normalizeGoalUnit(options.unit || DEFAULT_GOAL_UNIT);
+    const pointsAwarded = calculateGoalAwardPoints(sanitizedTargetValue);
+    const pointsPenalty = calculateGoalPenaltyPoints(pointsAwarded);
+
+    const nextGoal: SocialClanGoal = {
+      id: createId(),
+      title: sanitizedTitle,
+      targetValue: sanitizedTargetValue,
+      currentValue: 0,
+      unit: normalizedUnit,
+      dueDate: options.dueDate,
+      completed: false,
+      pointsAwarded,
+      pointsPenalty,
+      createdBy: options.createdBy,
+      requestText: options.requestText?.trim() || undefined,
+    };
+
+    setSocialState((prev) => ({
+      ...prev,
+      clans: prev.clans.map((clan) =>
+        clan.id === clanId ? { ...clan, goals: [nextGoal, ...clan.goals] } : clan
+      ),
+    }));
+
+    pushNotification({
+      type: 'goal',
+      title: options.createdBy === 'personal' ? 'Meta criada pelo Personal' : 'Meta criada',
+      description: `${nextGoal.title} em ${targetClan.name}. +${pointsAwarded} pts ao concluir e -${pointsPenalty} pts se atrasar.`,
+    }, false);
+    return true;
+  };
+
   const handleCreateGoal = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const target = Number(goalTargetValue);
@@ -2859,28 +3071,55 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       return;
     }
 
-    const nextGoal: SocialClanGoal = {
-      id: createId(),
-      title: goalTitle.trim(),
+    const created = createClanGoal(goalClanId, {
+      title: goalTitle,
       targetValue: target,
-      currentValue: 0,
-      unit: goalUnit.trim() || 'pontos',
+      unit: goalUnit,
       dueDate: goalDueDate,
-      completed: false,
-    };
-
-    setSocialState((prev) => ({
-      ...prev,
-      clans: prev.clans.map((clan) =>
-        clan.id === goalClanId ? { ...clan, goals: [nextGoal, ...clan.goals] } : clan
-      ),
-    }));
+      createdBy: 'user',
+    });
+    if (!created) {
+      toast.error('Nao foi possivel criar a meta no CLA selecionado.');
+      return;
+    }
 
     setGoalTitle('');
     setGoalTargetValue('10');
     setGoalUnit('treinos');
     setGoalDueDate('');
     toast.success('Meta criada.');
+  };
+
+  const handleCreateGoalWithPersonal = () => {
+    if (!goalClanId) {
+      toast.error('Selecione um CLA para o Personal criar a meta.');
+      return;
+    }
+    if (!goalRequestText.trim()) {
+      toast.error('Escreva a solicitacao para o Personal criar a meta.');
+      return;
+    }
+
+    const parsedRequest = parseGoalRequest(goalRequestText);
+    const created = createClanGoal(goalClanId, {
+      title: parsedRequest.title,
+      targetValue: parsedRequest.targetValue,
+      unit: parsedRequest.unit,
+      dueDate: parsedRequest.dueDate,
+      createdBy: 'personal',
+      requestText: goalRequestText,
+    });
+    if (!created) {
+      toast.error('Nao foi possivel criar a meta com o Personal.');
+      return;
+    }
+
+    setGoalTitle(parsedRequest.title);
+    setGoalTargetValue(String(parsedRequest.targetValue));
+    setGoalUnit(parsedRequest.unit);
+    setGoalDueDate(parsedRequest.dueDate);
+    setGoalRequestText('');
+    toast.success('Meta criada pelo Personal conforme sua solicitacao.');
   };
 
   const handleCreateChallenge = (event: FormEvent<HTMLFormElement>) => {
@@ -2917,6 +3156,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   };
 
   const handleIncreaseGoalProgress = (clanId: string, goalId: string) => {
+    let awardedPoints = 0;
+    let completedGoalTitle = '';
+
     setSocialState((prev) => ({
       ...prev,
       clans: prev.clans.map((clan) => {
@@ -2925,13 +3167,104 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           ...clan,
           goals: clan.goals.map((goal) => {
             if (goal.id !== goalId) return goal;
-            const currentValue = Math.min(goal.targetValue, goal.currentValue + 1);
-            return { ...goal, currentValue, completed: currentValue >= goal.targetValue };
+            const nextValue = Math.min(goal.targetValue, goal.currentValue + 1);
+            const completed = nextValue >= goal.targetValue;
+            const justCompleted = completed && !goal.completed;
+
+            if (justCompleted) {
+              const pointsAwarded = goal.pointsAwarded ?? calculateGoalAwardPoints(goal.targetValue);
+              awardedPoints += pointsAwarded;
+              completedGoalTitle = goal.title;
+              return {
+                ...goal,
+                currentValue: nextValue,
+                completed: true,
+                pointsAwarded,
+                scoredAt: goal.scoredAt || new Date().toISOString(),
+              };
+            }
+
+            return {
+              ...goal,
+              currentValue: nextValue,
+              completed,
+            };
           }),
         };
       }),
     }));
+
+    if (awardedPoints > 0) {
+      void applyProfilePointsDelta(awardedPoints, `Meta concluida: ${completedGoalTitle}`);
+      pushNotification({
+        type: 'goal',
+        title: 'Meta concluida',
+        description: `${completedGoalTitle} finalizada. +${awardedPoints} pts.`,
+      }, false);
+    }
   };
+
+  const applyOverdueGoalPenalties = useCallback(() => {
+    const now = Date.now();
+    let penalizedPoints = 0;
+    const penalizedGoalTitles: string[] = [];
+
+    setSocialState((previous) => {
+      let changed = false;
+      const nextClans = previous.clans.map((clan) => ({
+        ...clan,
+        goals: clan.goals.map((goal) => {
+          if (goal.completed || goal.penalizedAt || !goal.dueDate) return goal;
+
+          const dueTimestamp = resolveGoalDueTimestamp(goal.dueDate);
+          if (!dueTimestamp || dueTimestamp > now) return goal;
+
+          changed = true;
+          const pointsPenalty =
+            goal.pointsPenalty ??
+            calculateGoalPenaltyPoints(
+              goal.pointsAwarded ?? calculateGoalAwardPoints(goal.targetValue)
+            );
+
+          penalizedPoints += pointsPenalty;
+          penalizedGoalTitles.push(goal.title);
+          return {
+            ...goal,
+            pointsPenalty,
+            penalizedAt: new Date().toISOString(),
+          };
+        }),
+      }));
+
+      if (!changed) return previous;
+      return {
+        ...previous,
+        clans: nextClans,
+      };
+    });
+
+    if (penalizedPoints > 0) {
+      const firstGoalTitle = penalizedGoalTitles[0] || 'Meta atrasada';
+      const moreCount = Math.max(0, penalizedGoalTitles.length - 1);
+      const suffix = moreCount ? ` e mais ${moreCount}` : '';
+      void applyProfilePointsDelta(-penalizedPoints, `Meta atrasada: ${firstGoalTitle}${suffix}`);
+      pushNotification({
+        type: 'goal',
+        title: 'Penalidade aplicada em meta',
+        description: `Foram descontados ${penalizedPoints} pts por metas de CLA vencidas.`,
+      }, false);
+    }
+  }, [applyProfilePointsDelta, pushNotification]);
+
+  useEffect(() => {
+    applyOverdueGoalPenalties();
+    const intervalId = window.setInterval(() => {
+      applyOverdueGoalPenalties();
+    }, 60 * 1000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [applyOverdueGoalPenalties]);
 
   const handleToggleChallengeDone = (clanId: string, challengeId: string) => {
     setSocialState((prev) => ({
@@ -4375,10 +4708,37 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     <Input value={goalUnit} onChange={(event) => setGoalUnit(event.target.value)} placeholder="Unidade" />
                   </div>
                   <Input type="date" value={goalDueDate} onChange={(event) => setGoalDueDate(event.target.value)} />
-                  <Button type="submit" variant="outline" className="w-full" disabled={!socialState.clans.length}>
-                    <Target className="h-4 w-4" />
-                    Criar meta
-                  </Button>
+                  <div className="space-y-2 rounded-lg border border-border/70 bg-background/40 p-2">
+                    <Label htmlFor="goal-request-text" className="text-xs text-muted-foreground">
+                      Solicitar meta ao Personal
+                    </Label>
+                    <Textarea
+                      id="goal-request-text"
+                      value={goalRequestText}
+                      onChange={(event) => setGoalRequestText(event.target.value)}
+                      placeholder="Ex: Quero correr 30 km em 15 dias"
+                      className="min-h-[84px]"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      O Personal interpreta sua solicitacao e cria a meta automaticamente.
+                    </p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button type="submit" variant="outline" className="w-full" disabled={!socialState.clans.length}>
+                      <Target className="h-4 w-4" />
+                      Criar meta manual
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="energy"
+                      className="w-full"
+                      disabled={!socialState.clans.length}
+                      onClick={handleCreateGoalWithPersonal}
+                    >
+                      <Target className="h-4 w-4" />
+                      Personal criar meta
+                    </Button>
+                  </div>
                 </form>
 
                 <form className="space-y-3 border-t border-border/70 pt-4" onSubmit={handleCreateChallenge}>
@@ -4443,6 +4803,23 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                           <Badge variant={goal.completed ? 'default' : 'outline'}>
                             {goal.currentValue}/{goal.targetValue} {goal.unit}
                           </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Prazo: {goal.dueDate ? formatDate(goal.dueDate) : 'Sem prazo'}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Pontuacao: +{goal.pointsAwarded ?? calculateGoalAwardPoints(goal.targetValue)} pts se concluir e -{goal.pointsPenalty ?? calculateGoalPenaltyPoints(goal.pointsAwarded ?? calculateGoalAwardPoints(goal.targetValue))} pts se vencer sem cumprir.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="secondary">
+                            {goal.createdBy === 'personal' ? 'Criada pelo Personal' : 'Criada por voce'}
+                          </Badge>
+                          {goal.scoredAt && (
+                            <Badge variant="outline">Recompensa aplicada</Badge>
+                          )}
+                          {goal.penalizedAt && (
+                            <Badge variant="outline">Penalidade aplicada</Badge>
+                          )}
                         </div>
                         <Button type="button" size="sm" variant="outline" onClick={() => handleIncreaseGoalProgress(clan.id, goal.id)} disabled={goal.completed}>
                           {goal.completed ? 'Concluida' : '+1 progresso'}
