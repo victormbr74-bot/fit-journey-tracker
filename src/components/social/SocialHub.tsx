@@ -213,6 +213,7 @@ const NOTIFICATION_LIMIT = 120;
 const MAX_IMAGE_SIZE = 1080;
 const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_GLOBAL_CHAT_ATTACHMENT_DATA_URL_LENGTH = 700000;
+const MAX_GLOBAL_CHAT_AUDIO_ATTACHMENT_DATA_URL_LENGTH = 1500000;
 const MAX_VOICE_RECORDING_SECONDS = 60;
 const DEFAULT_GOAL_TARGET = 1;
 const DEFAULT_GOAL_UNIT = 'tarefas';
@@ -641,10 +642,11 @@ const sanitizeChatEvents = (events: SocialGlobalChatEvent[]) =>
       const attachmentDataUrl = event.attachmentDataUrl?.toString() || '';
       const attachmentName = event.attachmentName?.toString().trim() || '';
       const attachmentType = event.attachmentType?.toString().trim() || '';
+      const maxAttachmentDataUrlLength = getGlobalChatAttachmentDataUrlLimit(attachmentType);
       const shouldKeepAttachmentDataUrl =
-        attachmentType.startsWith('image/') &&
+        isGlobalChatAttachmentMediaType(attachmentType) &&
         attachmentDataUrl.length > 0 &&
-        attachmentDataUrl.length <= MAX_GLOBAL_CHAT_ATTACHMENT_DATA_URL_LENGTH;
+        attachmentDataUrl.length <= maxAttachmentDataUrlLength;
       const safeAttachmentDataUrl = shouldKeepAttachmentDataUrl ? attachmentDataUrl : '';
 
       if (!trimmedText && !safeAttachmentDataUrl && !attachmentName) return null;
@@ -786,6 +788,14 @@ const sanitizeChatMessages = (messages: unknown): SocialChatMessage[] => {
     .filter((message): message is SocialChatMessage => Boolean(message))
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 };
+
+const isGlobalChatAttachmentMediaType = (attachmentType: string) =>
+  attachmentType.startsWith('image/') || attachmentType.startsWith('audio/');
+
+const getGlobalChatAttachmentDataUrlLimit = (attachmentType: string) =>
+  attachmentType.startsWith('audio/')
+    ? MAX_GLOBAL_CHAT_AUDIO_ATTACHMENT_DATA_URL_LENGTH
+    : MAX_GLOBAL_CHAT_ATTACHMENT_DATA_URL_LENGTH;
 
 const sanitizeClanAutoGoalTemplates = (templates: unknown): SocialClanAutoGoalTemplate[] => {
   if (!Array.isArray(templates)) return [];
@@ -4820,11 +4830,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       : '';
     const messageText = text.trim() || fallbackText;
     if (!messageText) return false;
-    const isImageAttachment = (attachment?.type || '').startsWith('image/');
+    const attachmentType = attachment?.type || '';
+    const isShareableGlobalAttachmentType = isGlobalChatAttachmentMediaType(attachmentType);
+    const maxAttachmentDataUrlLength = getGlobalChatAttachmentDataUrlLimit(attachmentType);
     const shouldShareAttachmentDataUrl =
       Boolean(attachment?.dataUrl) &&
-      isImageAttachment &&
-      (attachment?.dataUrl.length || 0) <= MAX_GLOBAL_CHAT_ATTACHMENT_DATA_URL_LENGTH;
+      isShareableGlobalAttachmentType &&
+      (attachment?.dataUrl.length || 0) <= maxAttachmentDataUrlLength;
     const globalAttachmentDataUrl = shouldShareAttachmentDataUrl ? attachment?.dataUrl : undefined;
 
     const createdAt = new Date().toISOString();
@@ -5078,14 +5090,19 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setProcessingChatAttachment(true);
     try {
       const isImage = file.type.startsWith('image/');
-      const dataUrl = isImage ? await convertImageToDataUrl(file) : '';
+      const isAudio = file.type.startsWith('audio/');
+      const dataUrl = isImage
+        ? await convertImageToDataUrl(file)
+        : isAudio
+          ? await blobToDataUrl(file)
+          : '';
 
       setPendingChatAttachment({
         name: file.name || 'arquivo',
         type: file.type || 'application/octet-stream',
         dataUrl,
       });
-      if (!isImage) {
+      if (!isImage && !isAudio) {
         toast.success('Arquivo anexado. O chat exibira nome e tipo do arquivo.');
       }
       setIsEmojiPickerOpen(false);
