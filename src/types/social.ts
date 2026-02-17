@@ -40,6 +40,9 @@ export interface SocialClanGoal {
   penalizedAt?: string;
   createdBy?: 'user' | 'personal';
   requestText?: string;
+  goalType?: 'manual' | 'personal' | 'auto_daily' | 'auto_weekly';
+  autoTemplateId?: string;
+  autoPeriodKey?: string;
 }
 
 export interface SocialClanChallenge {
@@ -51,14 +54,31 @@ export interface SocialClanChallenge {
   completed: boolean;
 }
 
+export interface SocialClanAutoGoalTemplate {
+  id: string;
+  title: string;
+  targetValue: number;
+  unit: string;
+  frequency: 'daily' | 'weekly';
+  enabled: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface SocialClan {
   id: string;
   name: string;
   description: string;
   memberIds: string[];
+  adminProfileId?: string;
+  adminHandle?: string;
+  adminName?: string;
+  adminFriendId?: string;
+  adminDefinedAt?: string;
   createdAt: string;
   goals: SocialClanGoal[];
   challenges: SocialClanChallenge[];
+  autoGoalTemplates?: SocialClanAutoGoalTemplate[];
 }
 
 export interface SocialFeedPost {
@@ -95,6 +115,7 @@ export interface SocialPostComment {
   createdAt: string;
   likes: number;
   likedByHandles: string[];
+  parentCommentId?: string;
 }
 
 export interface SocialNotification {

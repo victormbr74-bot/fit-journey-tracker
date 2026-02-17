@@ -56,6 +56,7 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { UserProfile } from '@/types/user';
 import {
+  SocialClanAutoGoalTemplate,
   SocialClan,
   SocialClanChallenge,
   SocialClanGoal,
@@ -199,6 +200,11 @@ const MAX_VOICE_RECORDING_SECONDS = 60;
 const DEFAULT_GOAL_TARGET = 1;
 const DEFAULT_GOAL_UNIT = 'tarefas';
 const DEFAULT_GOAL_AUTO_DUE_DAYS = 7;
+const DEFAULT_AUTO_DAILY_GOAL_TITLE = 'Treino diario';
+const DEFAULT_AUTO_WEEKLY_GOAL_TITLE = 'Treino semanal';
+const DEFAULT_AUTO_DAILY_GOAL_TARGET = 1;
+const DEFAULT_AUTO_WEEKLY_GOAL_TARGET = 4;
+const DEFAULT_AUTO_GOAL_UNIT = 'treinos';
 const GLOBAL_FEED_POST_LIMIT = 500;
 const GLOBAL_STORY_LIMIT = 500;
 const GLOBAL_FRIEND_REQUEST_LIMIT = 500;
@@ -313,6 +319,63 @@ const resolveGoalDueTimestamp = (dueDate: string) => {
   return parsedDate.getTime();
 };
 
+const isValidIsoDate = (value: unknown): value is string =>
+  typeof value === 'string' && Boolean(value) && !Number.isNaN(new Date(value).getTime());
+
+const getWeekStartDate = (referenceDate: Date) => {
+  const normalizedDate = new Date(referenceDate);
+  normalizedDate.setHours(0, 0, 0, 0);
+  const weekDay = normalizedDate.getDay();
+  const diffToMonday = weekDay === 0 ? -6 : 1 - weekDay;
+  normalizedDate.setDate(normalizedDate.getDate() + diffToMonday);
+  return normalizedDate;
+};
+
+const getWeekPeriodKey = (referenceDate: Date) => {
+  const weekStart = getWeekStartDate(referenceDate);
+  return `week-${toDateInputValue(weekStart)}`;
+};
+
+const getWeekDueDate = (referenceDate: Date) => {
+  const weekStart = getWeekStartDate(referenceDate);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  return toDateInputValue(weekEnd);
+};
+
+const resolveAutoGoalSchedule = (
+  frequency: SocialClanAutoGoalTemplate['frequency'],
+  referenceDate: Date
+) => {
+  if (frequency === 'weekly') {
+    return {
+      dueDate: getWeekDueDate(referenceDate),
+      periodKey: getWeekPeriodKey(referenceDate),
+      goalType: 'auto_weekly' as const,
+    };
+  }
+
+  return {
+    dueDate: toDateInputValue(referenceDate),
+    periodKey: toDateInputValue(referenceDate),
+    goalType: 'auto_daily' as const,
+  };
+};
+
+const normalizeGoalType = (goal: Partial<SocialClanGoal>): NonNullable<SocialClanGoal['goalType']> => {
+  if (
+    goal.goalType === 'manual' ||
+    goal.goalType === 'personal' ||
+    goal.goalType === 'auto_daily' ||
+    goal.goalType === 'auto_weekly'
+  ) {
+    return goal.goalType;
+  }
+
+  if (goal.createdBy === 'personal') return 'personal';
+  return 'manual';
+};
+
 interface ParsedGoalRequest {
   title: string;
   targetValue: number;
@@ -409,6 +472,10 @@ const sanitizePostComments = (comments: unknown): SocialPostComment[] => {
         createdAt,
         likes,
         likedByHandles,
+        parentCommentId:
+          typeof rawComment.parentCommentId === 'string' && rawComment.parentCommentId.trim()
+            ? rawComment.parentCommentId.trim()
+            : undefined,
       } as SocialPostComment;
     })
     .filter((comment): comment is SocialPostComment => Boolean(comment))
@@ -674,6 +741,210 @@ const sanitizeChatMessages = (messages: unknown): SocialChatMessage[] => {
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 };
 
+const sanitizeClanAutoGoalTemplates = (templates: unknown): SocialClanAutoGoalTemplate[] => {
+  if (!Array.isArray(templates)) return [];
+
+  const templatesByFrequency = new Map<SocialClanAutoGoalTemplate['frequency'], SocialClanAutoGoalTemplate>();
+  templates.forEach((template, index) => {
+    if (!template || typeof template !== 'object') return;
+    const rawTemplate = template as Partial<SocialClanAutoGoalTemplate>;
+    const frequency: SocialClanAutoGoalTemplate['frequency'] =
+      rawTemplate.frequency === 'weekly' ? 'weekly' : 'daily';
+    const fallbackTarget =
+      frequency === 'weekly' ? DEFAULT_AUTO_WEEKLY_GOAL_TARGET : DEFAULT_AUTO_DAILY_GOAL_TARGET;
+    const parsedTarget = Number(rawTemplate.targetValue);
+    const targetValue =
+      Number.isFinite(parsedTarget) && parsedTarget > 0
+        ? Math.max(1, Math.round(parsedTarget))
+        : fallbackTarget;
+    const createdAt = isValidIsoDate(rawTemplate.createdAt)
+      ? rawTemplate.createdAt
+      : new Date().toISOString();
+    const updatedAt = isValidIsoDate(rawTemplate.updatedAt)
+      ? rawTemplate.updatedAt
+      : undefined;
+    const fallbackTitle =
+      frequency === 'weekly' ? DEFAULT_AUTO_WEEKLY_GOAL_TITLE : DEFAULT_AUTO_DAILY_GOAL_TITLE;
+    const nextTemplate: SocialClanAutoGoalTemplate = {
+      id:
+        typeof rawTemplate.id === 'string' && rawTemplate.id
+          ? rawTemplate.id
+          : `clan-auto-template-${frequency}-${index}-${createId()}`,
+      title: rawTemplate.title?.trim() || fallbackTitle,
+      targetValue,
+      unit: normalizeGoalUnit(rawTemplate.unit || DEFAULT_AUTO_GOAL_UNIT),
+      frequency,
+      enabled: typeof rawTemplate.enabled === 'boolean' ? rawTemplate.enabled : true,
+      createdAt,
+      updatedAt,
+    };
+
+    const previousTemplate = templatesByFrequency.get(frequency);
+    if (!previousTemplate) {
+      templatesByFrequency.set(frequency, nextTemplate);
+      return;
+    }
+
+    const previousTimestamp = new Date(
+      previousTemplate.updatedAt || previousTemplate.createdAt
+    ).getTime();
+    const nextTimestamp = new Date(nextTemplate.updatedAt || nextTemplate.createdAt).getTime();
+    if (nextTimestamp >= previousTimestamp) {
+      templatesByFrequency.set(frequency, nextTemplate);
+    }
+  });
+
+  return Array.from(templatesByFrequency.values());
+};
+
+const sanitizeClanGoals = (goals: unknown): SocialClanGoal[] => {
+  if (!Array.isArray(goals)) return [];
+
+  return goals
+    .map((goal, index) => {
+      if (!goal || typeof goal !== 'object') return null;
+      const rawGoal = goal as Partial<SocialClanGoal>;
+      const title = rawGoal.title?.trim() || `Meta ${index + 1}`;
+      const parsedTarget = Number(rawGoal.targetValue);
+      const targetValue =
+        Number.isFinite(parsedTarget) && parsedTarget > 0
+          ? Math.max(1, Math.round(parsedTarget))
+          : DEFAULT_GOAL_TARGET;
+      const parsedCurrent = Number(rawGoal.currentValue);
+      const currentValue = Number.isFinite(parsedCurrent)
+        ? Math.max(0, Math.min(targetValue, Math.round(parsedCurrent)))
+        : 0;
+      const pointsAwarded = Number.isFinite(Number(rawGoal.pointsAwarded)) && Number(rawGoal.pointsAwarded) > 0
+        ? Math.max(1, Math.round(Number(rawGoal.pointsAwarded)))
+        : calculateGoalAwardPoints(targetValue);
+      const pointsPenalty = Number.isFinite(Number(rawGoal.pointsPenalty)) && Number(rawGoal.pointsPenalty) > 0
+        ? Math.max(1, Math.round(Number(rawGoal.pointsPenalty)))
+        : calculateGoalPenaltyPoints(pointsAwarded);
+      const dueDate = typeof rawGoal.dueDate === 'string' ? rawGoal.dueDate : '';
+      const goalType = normalizeGoalType(rawGoal);
+      const createdBy = rawGoal.createdBy === 'personal' ? 'personal' : 'user';
+      const completed = Boolean(rawGoal.completed) || currentValue >= targetValue;
+
+      let autoPeriodKey =
+        typeof rawGoal.autoPeriodKey === 'string' && rawGoal.autoPeriodKey.trim()
+          ? rawGoal.autoPeriodKey.trim()
+          : undefined;
+      if (!autoPeriodKey && goalType === 'auto_daily' && /^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+        autoPeriodKey = dueDate;
+      }
+      if (!autoPeriodKey && goalType === 'auto_weekly' && dueDate) {
+        const dueDateObject = new Date(dueDate);
+        if (!Number.isNaN(dueDateObject.getTime())) {
+          autoPeriodKey = getWeekPeriodKey(dueDateObject);
+        }
+      }
+
+      return {
+        id: rawGoal.id || `clan-goal-${index}-${createId()}`,
+        title: title.slice(0, 120),
+        targetValue,
+        currentValue,
+        unit: normalizeGoalUnit(rawGoal.unit || DEFAULT_GOAL_UNIT),
+        dueDate,
+        completed,
+        pointsAwarded,
+        pointsPenalty,
+        scoredAt: isValidIsoDate(rawGoal.scoredAt) ? rawGoal.scoredAt : undefined,
+        penalizedAt: isValidIsoDate(rawGoal.penalizedAt) ? rawGoal.penalizedAt : undefined,
+        createdBy,
+        requestText: rawGoal.requestText?.trim() || undefined,
+        goalType,
+        autoTemplateId:
+          typeof rawGoal.autoTemplateId === 'string' && rawGoal.autoTemplateId.trim()
+            ? rawGoal.autoTemplateId.trim()
+            : undefined,
+        autoPeriodKey,
+      } as SocialClanGoal;
+    })
+    .filter((goal): goal is SocialClanGoal => Boolean(goal));
+};
+
+const sanitizeClanChallenges = (challenges: unknown): SocialClanChallenge[] => {
+  if (!Array.isArray(challenges)) return [];
+
+  return challenges
+    .map((challenge, index) => {
+      if (!challenge || typeof challenge !== 'object') return null;
+      const rawChallenge = challenge as Partial<SocialClanChallenge>;
+      const parsedPoints = Number(rawChallenge.points);
+      const points =
+        Number.isFinite(parsedPoints) && parsedPoints > 0 ? Math.round(parsedPoints) : 100;
+
+      return {
+        id: rawChallenge.id || `clan-challenge-${index}-${createId()}`,
+        title: rawChallenge.title?.trim() || `Desafio ${index + 1}`,
+        description: rawChallenge.description?.trim() || '',
+        points,
+        dueDate: typeof rawChallenge.dueDate === 'string' ? rawChallenge.dueDate : '',
+        completed: Boolean(rawChallenge.completed),
+      } as SocialClanChallenge;
+    })
+    .filter((challenge): challenge is SocialClanChallenge => Boolean(challenge));
+};
+
+const sanitizeClans = (
+  clans: unknown,
+  currentProfile: Pick<UserProfile, 'id' | 'name' | 'handle' | 'email'>
+): SocialClan[] => {
+  if (!Array.isArray(clans)) return [];
+
+  const fallbackProfileHandle = toHandle(
+    currentProfile.handle || currentProfile.name || currentProfile.email || 'fit.user'
+  );
+  const normalizedFallbackHandle = normalizeHandle(fallbackProfileHandle);
+  const fallbackAdminHandle = normalizedFallbackHandle
+    ? toHandle(normalizedFallbackHandle)
+    : fallbackProfileHandle;
+  const fallbackAdminName = currentProfile.name?.trim() || 'Voce';
+
+  return clans
+    .map((clan, index) => {
+      if (!clan || typeof clan !== 'object') return null;
+      const rawClan = clan as Partial<SocialClan>;
+      const memberIds = Array.isArray(rawClan.memberIds)
+        ? Array.from(
+            new Set(rawClan.memberIds.filter((memberId): memberId is string => typeof memberId === 'string' && memberId))
+          )
+        : [];
+      const createdAt = isValidIsoDate(rawClan.createdAt) ? rawClan.createdAt : new Date().toISOString();
+      const adminProfileId =
+        typeof rawClan.adminProfileId === 'string' && rawClan.adminProfileId
+          ? rawClan.adminProfileId
+          : undefined;
+      const normalizedAdminHandle = normalizeHandle(rawClan.adminHandle || '');
+      const adminHandle = normalizedAdminHandle ? toHandle(normalizedAdminHandle) : undefined;
+      const adminFriendId =
+        typeof rawClan.adminFriendId === 'string' &&
+        rawClan.adminFriendId &&
+        memberIds.includes(rawClan.adminFriendId)
+          ? rawClan.adminFriendId
+          : undefined;
+      const hasExplicitAdmin = Boolean(adminProfileId || adminHandle || adminFriendId);
+
+      return {
+        id: rawClan.id || `clan-${index}-${createId()}`,
+        name: rawClan.name?.trim() || `CLA ${index + 1}`,
+        description: rawClan.description?.trim() || '',
+        memberIds,
+        adminProfileId: hasExplicitAdmin ? adminProfileId : currentProfile.id,
+        adminHandle: hasExplicitAdmin ? adminHandle : fallbackAdminHandle,
+        adminName: rawClan.adminName?.trim() || (hasExplicitAdmin ? 'Administrador do CLA' : fallbackAdminName),
+        adminFriendId,
+        adminDefinedAt: isValidIsoDate(rawClan.adminDefinedAt) ? rawClan.adminDefinedAt : createdAt,
+        createdAt,
+        goals: sanitizeClanGoals(rawClan.goals),
+        challenges: sanitizeClanChallenges(rawClan.challenges),
+        autoGoalTemplates: sanitizeClanAutoGoalTemplates(rawClan.autoGoalTemplates),
+      } as SocialClan;
+    })
+    .filter((clan): clan is SocialClan => Boolean(clan));
+};
+
 const convertImageToDataUrl = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -883,6 +1154,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [clanName, setClanName] = useState('');
   const [clanDescription, setClanDescription] = useState('');
   const [clanMemberIds, setClanMemberIds] = useState<string[]>([]);
+  const [clanAdminMemberId, setClanAdminMemberId] = useState('self');
 
   const [goalClanId, setGoalClanId] = useState('');
   const [goalTitle, setGoalTitle] = useState('');
@@ -890,6 +1162,18 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [goalUnit, setGoalUnit] = useState('treinos');
   const [goalDueDate, setGoalDueDate] = useState('');
   const [goalRequestText, setGoalRequestText] = useState('');
+  const [autoDailyGoalEnabled, setAutoDailyGoalEnabled] = useState(true);
+  const [autoDailyGoalTitle, setAutoDailyGoalTitle] = useState(DEFAULT_AUTO_DAILY_GOAL_TITLE);
+  const [autoDailyGoalTargetValue, setAutoDailyGoalTargetValue] = useState(
+    String(DEFAULT_AUTO_DAILY_GOAL_TARGET)
+  );
+  const [autoDailyGoalUnit, setAutoDailyGoalUnit] = useState(DEFAULT_AUTO_GOAL_UNIT);
+  const [autoWeeklyGoalEnabled, setAutoWeeklyGoalEnabled] = useState(true);
+  const [autoWeeklyGoalTitle, setAutoWeeklyGoalTitle] = useState(DEFAULT_AUTO_WEEKLY_GOAL_TITLE);
+  const [autoWeeklyGoalTargetValue, setAutoWeeklyGoalTargetValue] = useState(
+    String(DEFAULT_AUTO_WEEKLY_GOAL_TARGET)
+  );
+  const [autoWeeklyGoalUnit, setAutoWeeklyGoalUnit] = useState(DEFAULT_AUTO_GOAL_UNIT);
 
   const [challengeClanId, setChallengeClanId] = useState('');
   const [challengeTitle, setChallengeTitle] = useState('');
@@ -925,6 +1209,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [shareMessage, setShareMessage] = useState('');
   const [selectedShareFriendIds, setSelectedShareFriendIds] = useState<string[]>([]);
   const [postCommentInputs, setPostCommentInputs] = useState<Record<string, string>>({});
+  const [replyCommentInputs, setReplyCommentInputs] = useState<Record<string, string>>({});
+  const [openReplyComposerByPostId, setOpenReplyComposerByPostId] = useState<Record<string, string>>({});
 
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [composerMode, setComposerMode] = useState<'post' | 'story'>('post');
@@ -958,6 +1244,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const lastGlobalSnapshotHashRef = useRef('');
   const notifiedRemoteSyncUnavailableRef = useRef(false);
   const profilePointsRef = useRef(profile.points || 0);
+  const autoGoalFormClanIdRef = useRef('');
 
   const triggerSystemNotification = useCallback(async (title: string, description: string) => {
     if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
@@ -1642,7 +1929,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         : [];
       setSocialState({
         friends: parsedFriends,
-        clans: parsed.clans || [],
+        clans: sanitizeClans(parsed.clans, profile),
         posts: [],
         chatMessages: keepChatHistory ? sanitizeChatMessages(parsed.chatMessages) : [],
         notifications: parsed.notifications || [],
@@ -1657,7 +1944,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
 
     setLoadedStorageKey(storageKey);
-  }, [chatHistoryPreferenceLoaded, keepChatHistory, storageKey]);
+  }, [chatHistoryPreferenceLoaded, keepChatHistory, profile, storageKey]);
 
   useEffect(() => {
     if (!chatHistoryPreferenceLoaded) return;
@@ -1699,6 +1986,38 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   }, [socialState.clans, goalClanId, challengeClanId]);
 
   useEffect(() => {
+    if (goalClanId === autoGoalFormClanIdRef.current) return;
+    autoGoalFormClanIdRef.current = goalClanId;
+
+    const targetClan = socialState.clans.find((clan) => clan.id === goalClanId);
+    if (!targetClan) {
+      setAutoDailyGoalEnabled(true);
+      setAutoDailyGoalTitle(DEFAULT_AUTO_DAILY_GOAL_TITLE);
+      setAutoDailyGoalTargetValue(String(DEFAULT_AUTO_DAILY_GOAL_TARGET));
+      setAutoDailyGoalUnit(DEFAULT_AUTO_GOAL_UNIT);
+      setAutoWeeklyGoalEnabled(true);
+      setAutoWeeklyGoalTitle(DEFAULT_AUTO_WEEKLY_GOAL_TITLE);
+      setAutoWeeklyGoalTargetValue(String(DEFAULT_AUTO_WEEKLY_GOAL_TARGET));
+      setAutoWeeklyGoalUnit(DEFAULT_AUTO_GOAL_UNIT);
+      return;
+    }
+
+    const dailyTemplate = targetClan.autoGoalTemplates?.find((template) => template.frequency === 'daily');
+    const weeklyTemplate = targetClan.autoGoalTemplates?.find((template) => template.frequency === 'weekly');
+
+    setAutoDailyGoalEnabled(Boolean(dailyTemplate?.enabled));
+    setAutoDailyGoalTitle(dailyTemplate?.title || DEFAULT_AUTO_DAILY_GOAL_TITLE);
+    setAutoDailyGoalTargetValue(String(dailyTemplate?.targetValue || DEFAULT_AUTO_DAILY_GOAL_TARGET));
+    setAutoDailyGoalUnit(dailyTemplate?.unit || DEFAULT_AUTO_GOAL_UNIT);
+    setAutoWeeklyGoalEnabled(Boolean(weeklyTemplate?.enabled));
+    setAutoWeeklyGoalTitle(weeklyTemplate?.title || DEFAULT_AUTO_WEEKLY_GOAL_TITLE);
+    setAutoWeeklyGoalTargetValue(
+      String(weeklyTemplate?.targetValue || DEFAULT_AUTO_WEEKLY_GOAL_TARGET)
+    );
+    setAutoWeeklyGoalUnit(weeklyTemplate?.unit || DEFAULT_AUTO_GOAL_UNIT);
+  }, [goalClanId, socialState.clans]);
+
+  useEffect(() => {
     const stored = window.localStorage.getItem(personalGoalRequestStorageKey);
     if (!stored) return;
 
@@ -1733,6 +2052,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       setFeedShareFriendId(socialState.friends[0].id);
     }
   }, [socialState.friends, activeChatFriendId, feedShareFriendId]);
+
+  useEffect(() => {
+    if (clanAdminMemberId === 'self') return;
+    if (socialState.friends.some((friend) => friend.id === clanAdminMemberId)) return;
+    setClanAdminMemberId('self');
+  }, [clanAdminMemberId, socialState.friends]);
 
   const incomingFriendRequests = useMemo(
     () =>
@@ -2264,6 +2589,33 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         socialState.friends.map((friend) => [normalizeHandle(friend.handle), friend] as const)
       ),
     [socialState.friends]
+  );
+
+  const isCurrentProfileClanAdmin = useCallback(
+    (clan: SocialClan) => {
+      const normalizedAdminHandle = normalizeHandle(clan.adminHandle || '');
+      if (normalizedAdminHandle) {
+        return normalizedAdminHandle === normalizedProfileHandle;
+      }
+      if (clan.adminProfileId) {
+        return clan.adminProfileId === profile.id;
+      }
+      if (clan.adminFriendId) {
+        return false;
+      }
+      return true;
+    },
+    [normalizedProfileHandle, profile.id]
+  );
+
+  const selectedGoalClan = useMemo(
+    () => socialState.clans.find((clan) => clan.id === goalClanId) || null,
+    [goalClanId, socialState.clans]
+  );
+
+  const goalClanManagedByCurrentUser = useMemo(
+    () => (selectedGoalClan ? isCurrentProfileClanAdmin(selectedGoalClan) : false),
+    [isCurrentProfileClanAdmin, selectedGoalClan]
   );
 
   const activeStories = useMemo(() => sanitizeStories(globalStories), [globalStories]);
@@ -2941,14 +3293,30 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setSocialState((previous) => ({
       ...previous,
       friends: previous.friends.filter((item) => item.id !== friendId),
-      clans: previous.clans.map((clan) => ({
-        ...clan,
-        memberIds: clan.memberIds.filter((memberId) => memberId !== friendId),
-      })),
+      clans: previous.clans.map((clan) => {
+        const nextMemberIds = clan.memberIds.filter((memberId) => memberId !== friendId);
+        if (clan.adminFriendId !== friendId) {
+          return {
+            ...clan,
+            memberIds: nextMemberIds,
+          };
+        }
+
+        return {
+          ...clan,
+          memberIds: nextMemberIds,
+          adminFriendId: undefined,
+          adminProfileId: profile.id,
+          adminHandle: toHandle(profileHandle),
+          adminName: profile.name?.trim() || 'Voce',
+          adminDefinedAt: new Date().toISOString(),
+        };
+      }),
       chatMessages: previous.chatMessages.filter((message) => message.friendId !== friendId),
     }));
 
     setClanMemberIds((previous) => previous.filter((memberId) => memberId !== friendId));
+    setClanAdminMemberId((previous) => (previous === friendId ? 'self' : previous));
     setFriendRequests((previous) =>
       sanitizeFriendRequests(
         previous.filter((request) => {
@@ -2977,6 +3345,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       }
       return prev.filter((id) => id !== friendId);
     });
+    if (!checked && clanAdminMemberId === friendId) {
+      setClanAdminMemberId('self');
+    }
   };
 
   const handleCreateClan = (event: FormEvent<HTMLFormElement>) => {
@@ -2990,26 +3361,71 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       return;
     }
 
+    const selectedAdminFriend = clanAdminMemberId !== 'self'
+      ? socialState.friends.find((friend) => friend.id === clanAdminMemberId) || null
+      : null;
+    if (clanAdminMemberId !== 'self' && !selectedAdminFriend) {
+      toast.error('Selecione um administrador valido para o CLA.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const adminName = selectedAdminFriend
+      ? selectedAdminFriend.name
+      : profile.name?.trim() || 'Voce';
+    const nextMemberIds = selectedAdminFriend && !clanMemberIds.includes(selectedAdminFriend.id)
+      ? [selectedAdminFriend.id, ...clanMemberIds]
+      : clanMemberIds;
+
     const nextClan: SocialClan = {
       id: createId(),
       name: clanName.trim(),
       description: clanDescription.trim(),
-      memberIds: clanMemberIds,
-      createdAt: new Date().toISOString(),
+      memberIds: nextMemberIds,
+      adminProfileId: selectedAdminFriend ? selectedAdminFriend.profileId || undefined : profile.id,
+      adminHandle: selectedAdminFriend ? toHandle(selectedAdminFriend.handle) : toHandle(profileHandle),
+      adminName,
+      adminFriendId: selectedAdminFriend?.id,
+      adminDefinedAt: nowIso,
+      createdAt: nowIso,
       goals: [],
       challenges: [],
+      autoGoalTemplates: [
+        {
+          id: `clan-auto-daily-${createId()}`,
+          title: DEFAULT_AUTO_DAILY_GOAL_TITLE,
+          targetValue: DEFAULT_AUTO_DAILY_GOAL_TARGET,
+          unit: DEFAULT_AUTO_GOAL_UNIT,
+          frequency: 'daily',
+          enabled: false,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        },
+        {
+          id: `clan-auto-weekly-${createId()}`,
+          title: DEFAULT_AUTO_WEEKLY_GOAL_TITLE,
+          targetValue: DEFAULT_AUTO_WEEKLY_GOAL_TARGET,
+          unit: DEFAULT_AUTO_GOAL_UNIT,
+          frequency: 'weekly',
+          enabled: false,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        },
+      ],
     };
 
     setSocialState((prev) => ({ ...prev, clans: [nextClan, ...prev.clans] }));
     pushNotification({
       type: 'clan',
       title: 'CLA criado',
-      description: `${nextClan.name} pronto para metas coletivas.`,
+      description: `${nextClan.name} pronto para metas coletivas. Admin: ${adminName}.`,
     });
 
     setClanName('');
     setClanDescription('');
     setClanMemberIds([]);
+    setClanAdminMemberId('self');
+    setGoalClanId(nextClan.id);
     toast.success('CLA criado.');
   };
 
@@ -3022,6 +3438,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       dueDate: string;
       createdBy: 'user' | 'personal';
       requestText?: string;
+      goalType?: SocialClanGoal['goalType'];
+      autoTemplateId?: string;
+      autoPeriodKey?: string;
     }
   ) => {
     if (!clanId) return false;
@@ -3029,6 +3448,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     if (!targetClan) return false;
 
     const sanitizedTitle = options.title.trim().slice(0, 120);
+    if (!sanitizedTitle) return false;
     const sanitizedTargetValue = Math.max(1, Math.round(options.targetValue));
     const normalizedUnit = normalizeGoalUnit(options.unit || DEFAULT_GOAL_UNIT);
     const pointsAwarded = calculateGoalAwardPoints(sanitizedTargetValue);
@@ -3046,6 +3466,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       pointsPenalty,
       createdBy: options.createdBy,
       requestText: options.requestText?.trim() || undefined,
+      goalType: options.goalType || (options.createdBy === 'personal' ? 'personal' : 'manual'),
+      autoTemplateId: options.autoTemplateId,
+      autoPeriodKey: options.autoPeriodKey,
     };
 
     setSocialState((prev) => ({
@@ -3070,6 +3493,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       toast.error('Preencha os dados da meta.');
       return;
     }
+    const targetClan = socialState.clans.find((clan) => clan.id === goalClanId);
+    if (!targetClan) {
+      toast.error('Selecione um CLA valido.');
+      return;
+    }
+    if (!isCurrentProfileClanAdmin(targetClan)) {
+      toast.error('Somente o admin do CLA pode criar metas.');
+      return;
+    }
 
     const created = createClanGoal(goalClanId, {
       title: goalTitle,
@@ -3077,6 +3509,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       unit: goalUnit,
       dueDate: goalDueDate,
       createdBy: 'user',
+      goalType: 'manual',
     });
     if (!created) {
       toast.error('Nao foi possivel criar a meta no CLA selecionado.');
@@ -3095,6 +3528,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       toast.error('Selecione um CLA para o Personal criar a meta.');
       return;
     }
+    const targetClan = socialState.clans.find((clan) => clan.id === goalClanId);
+    if (!targetClan) {
+      toast.error('Selecione um CLA valido.');
+      return;
+    }
+    if (!isCurrentProfileClanAdmin(targetClan)) {
+      toast.error('Somente o admin do CLA pode criar metas.');
+      return;
+    }
     if (!goalRequestText.trim()) {
       toast.error('Escreva a solicitacao para o Personal criar a meta.');
       return;
@@ -3108,6 +3550,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       dueDate: parsedRequest.dueDate,
       createdBy: 'personal',
       requestText: goalRequestText,
+      goalType: 'personal',
     });
     if (!created) {
       toast.error('Nao foi possivel criar a meta com o Personal.');
@@ -3120,6 +3563,95 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setGoalDueDate(parsedRequest.dueDate);
     setGoalRequestText('');
     toast.success('Meta criada pelo Personal conforme sua solicitacao.');
+  };
+
+  const handleSaveAutomaticGoals = () => {
+    if (!goalClanId) {
+      toast.error('Selecione um CLA para configurar metas automaticas.');
+      return;
+    }
+
+    const targetClan = socialState.clans.find((clan) => clan.id === goalClanId);
+    if (!targetClan) {
+      toast.error('Selecione um CLA valido.');
+      return;
+    }
+    if (!isCurrentProfileClanAdmin(targetClan)) {
+      toast.error('Somente o admin do CLA pode configurar metas automaticas.');
+      return;
+    }
+
+    const parsedDailyTarget = Number(autoDailyGoalTargetValue);
+    const parsedWeeklyTarget = Number(autoWeeklyGoalTargetValue);
+    if (
+      autoDailyGoalEnabled &&
+      (
+        !autoDailyGoalTitle.trim() ||
+        !Number.isFinite(parsedDailyTarget) ||
+        parsedDailyTarget <= 0
+      )
+    ) {
+      toast.error('Preencha corretamente a meta diaria automatica.');
+      return;
+    }
+    if (
+      autoWeeklyGoalEnabled &&
+      (
+        !autoWeeklyGoalTitle.trim() ||
+        !Number.isFinite(parsedWeeklyTarget) ||
+        parsedWeeklyTarget <= 0
+      )
+    ) {
+      toast.error('Preencha corretamente a meta semanal automatica.');
+      return;
+    }
+
+    const existingTemplates = targetClan.autoGoalTemplates || [];
+    const dailyTemplate = existingTemplates.find((template) => template.frequency === 'daily');
+    const weeklyTemplate = existingTemplates.find((template) => template.frequency === 'weekly');
+    const nowIso = new Date().toISOString();
+    const nextTemplates: SocialClanAutoGoalTemplate[] = [
+      {
+        id: dailyTemplate?.id || `clan-auto-daily-${createId()}`,
+        title: autoDailyGoalTitle.trim() || DEFAULT_AUTO_DAILY_GOAL_TITLE,
+        targetValue: Math.max(1, Math.round(parsedDailyTarget || DEFAULT_AUTO_DAILY_GOAL_TARGET)),
+        unit: normalizeGoalUnit(autoDailyGoalUnit || DEFAULT_AUTO_GOAL_UNIT),
+        frequency: 'daily',
+        enabled: autoDailyGoalEnabled,
+        createdAt: dailyTemplate?.createdAt || nowIso,
+        updatedAt: nowIso,
+      },
+      {
+        id: weeklyTemplate?.id || `clan-auto-weekly-${createId()}`,
+        title: autoWeeklyGoalTitle.trim() || DEFAULT_AUTO_WEEKLY_GOAL_TITLE,
+        targetValue: Math.max(1, Math.round(parsedWeeklyTarget || DEFAULT_AUTO_WEEKLY_GOAL_TARGET)),
+        unit: normalizeGoalUnit(autoWeeklyGoalUnit || DEFAULT_AUTO_GOAL_UNIT),
+        frequency: 'weekly',
+        enabled: autoWeeklyGoalEnabled,
+        createdAt: weeklyTemplate?.createdAt || nowIso,
+        updatedAt: nowIso,
+      },
+    ];
+
+    setSocialState((previous) => ({
+      ...previous,
+      clans: previous.clans.map((clan) =>
+        clan.id === goalClanId
+          ? { ...clan, autoGoalTemplates: nextTemplates }
+          : clan
+      ),
+    }));
+
+    const enabledCount = nextTemplates.filter((template) => template.enabled).length;
+    pushNotification({
+      type: 'goal',
+      title: 'Metas automaticas atualizadas',
+      description:
+        enabledCount > 0
+          ? `${targetClan.name} com ${enabledCount} meta(s) automatica(s) ativa(s).`
+          : `Metas automaticas desativadas em ${targetClan.name}.`,
+    }, false);
+    toast.success('Configuracao de metas automaticas salva.');
   };
 
   const handleCreateChallenge = (event: FormEvent<HTMLFormElement>) => {
@@ -3203,6 +3735,85 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       }, false);
     }
   };
+
+  const applyAutomaticClanGoals = useCallback(() => {
+    const referenceDate = new Date();
+
+    setSocialState((previous) => {
+      let changed = false;
+      const nextClans = previous.clans.map((clan) => {
+        if (!clan.adminDefinedAt) return clan;
+
+        const activeTemplates = (clan.autoGoalTemplates || []).filter((template) => template.enabled);
+        if (!activeTemplates.length) return clan;
+
+        const nextGoals = [...clan.goals];
+        let clanChanged = false;
+
+        activeTemplates.forEach((template) => {
+          const schedule = resolveAutoGoalSchedule(template.frequency, referenceDate);
+          const hasGoalForCurrentPeriod = nextGoals.some((goal) => {
+            if (goal.autoTemplateId && goal.autoPeriodKey) {
+              return goal.autoTemplateId === template.id && goal.autoPeriodKey === schedule.periodKey;
+            }
+            if (goal.goalType !== schedule.goalType) return false;
+            return (
+              goal.autoPeriodKey === schedule.periodKey &&
+              goal.title.trim().toLowerCase() === template.title.trim().toLowerCase()
+            );
+          });
+          if (hasGoalForCurrentPeriod) return;
+
+          const targetValue = Math.max(1, Math.round(template.targetValue || DEFAULT_GOAL_TARGET));
+          const pointsAwarded = calculateGoalAwardPoints(targetValue);
+          const pointsPenalty = calculateGoalPenaltyPoints(pointsAwarded);
+
+          nextGoals.unshift({
+            id: createId(),
+            title: template.title.trim().slice(0, 120) || 'Meta automatica',
+            targetValue,
+            currentValue: 0,
+            unit: normalizeGoalUnit(template.unit || DEFAULT_AUTO_GOAL_UNIT),
+            dueDate: schedule.dueDate,
+            completed: false,
+            pointsAwarded,
+            pointsPenalty,
+            createdBy: 'user',
+            goalType: schedule.goalType,
+            autoTemplateId: template.id,
+            autoPeriodKey: schedule.periodKey,
+          });
+          clanChanged = true;
+        });
+
+        if (!clanChanged) return clan;
+        changed = true;
+        return {
+          ...clan,
+          goals: nextGoals,
+        };
+      });
+
+      if (!changed) return previous;
+      return {
+        ...previous,
+        clans: nextClans,
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    applyAutomaticClanGoals();
+  }, [applyAutomaticClanGoals, socialState.clans]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      applyAutomaticClanGoals();
+    }, 60 * 1000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [applyAutomaticClanGoals]);
 
   const applyOverdueGoalPenalties = useCallback(() => {
     const now = Date.now();
@@ -3405,8 +4016,26 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     );
   };
 
-  const handleAddPostComment = (postId: string) => {
-    const text = (postCommentInputs[postId] || '').trim();
+  const handleOpenReplyComposer = (postId: string, commentId: string) => {
+    setOpenReplyComposerByPostId((previous) => ({
+      ...previous,
+      [postId]: commentId,
+    }));
+  };
+
+  const handleCloseReplyComposer = (postId: string) => {
+    setOpenReplyComposerByPostId((previous) => {
+      if (!(postId in previous)) return previous;
+      const next = { ...previous };
+      delete next[postId];
+      return next;
+    });
+  };
+
+  const handleAddPostComment = (postId: string, parentCommentId?: string) => {
+    const text = parentCommentId
+      ? (replyCommentInputs[parentCommentId] || '').trim()
+      : (postCommentInputs[postId] || '').trim();
     if (!text) return;
 
     const nextComment: SocialPostComment = {
@@ -3417,6 +4046,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       createdAt: new Date().toISOString(),
       likes: 0,
       likedByHandles: [],
+      parentCommentId,
     };
 
     setGlobalPosts((previous) =>
@@ -3426,6 +4056,14 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           : post
       )
     );
+
+    if (parentCommentId) {
+      setReplyCommentInputs((previous) => ({ ...previous, [parentCommentId]: '' }));
+      handleCloseReplyComposer(postId);
+      toast.success('Resposta publicada.');
+      return;
+    }
+
     setPostCommentInputs((previous) => ({ ...previous, [postId]: '' }));
     toast.success('Comentario publicado.');
   };
@@ -4672,6 +5310,23 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                   <Textarea id="clan-description" value={clanDescription} onChange={(event) => setClanDescription(event.target.value)} />
                 </div>
                 <div className="space-y-2">
+                  <Label htmlFor="clan-admin-member">Administrador do CLA</Label>
+                  <select
+                    id="clan-admin-member"
+                    className="flex h-12 w-full rounded-lg border border-border bg-secondary/50 px-3 text-sm"
+                    value={clanAdminMemberId}
+                    onChange={(event) => setClanAdminMemberId(event.target.value)}
+                  >
+                    <option value="self">Voce ({profile.name?.trim() || profileHandle})</option>
+                    {socialState.friends.map((friend) => (
+                      <option key={friend.id} value={friend.id}>{friend.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground">
+                    As metas do CLA sao geridas pelo admin definido aqui.
+                  </p>
+                </div>
+                <div className="space-y-2">
                   <Label>Membros</Label>
                   <div className="rounded-lg border border-border/70 p-2 max-h-40 overflow-y-auto space-y-2">
                     {!socialState.friends.length && <p className="text-sm text-muted-foreground">Siga perfis primeiro.</p>}
@@ -4702,6 +5357,17 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       <option key={clan.id} value={clan.id}>{clan.name}</option>
                     ))}
                   </select>
+                  {selectedGoalClan && (
+                    <p className={cn(
+                      'text-[11px]',
+                      goalClanManagedByCurrentUser ? 'text-muted-foreground' : 'text-amber-600'
+                    )}>
+                      Admin do CLA: {selectedGoalClan.adminName || 'Nao definido'}.
+                      {goalClanManagedByCurrentUser
+                        ? ' Voce pode criar e configurar metas.'
+                        : ' Somente o admin pode criar metas e automacoes.'}
+                    </p>
+                  )}
                   <Input value={goalTitle} onChange={(event) => setGoalTitle(event.target.value)} placeholder="Titulo da meta" />
                   <div className="grid grid-cols-2 gap-2">
                     <Input type="number" min="1" value={goalTargetValue} onChange={(event) => setGoalTargetValue(event.target.value)} placeholder="Alvo" />
@@ -4724,7 +5390,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     </p>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    <Button type="submit" variant="outline" className="w-full" disabled={!socialState.clans.length}>
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      className="w-full"
+                      disabled={!socialState.clans.length || !goalClanManagedByCurrentUser}
+                    >
                       <Target className="h-4 w-4" />
                       Criar meta manual
                     </Button>
@@ -4732,12 +5403,103 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       type="button"
                       variant="energy"
                       className="w-full"
-                      disabled={!socialState.clans.length}
+                      disabled={!socialState.clans.length || !goalClanManagedByCurrentUser}
                       onClick={handleCreateGoalWithPersonal}
                     >
                       <Target className="h-4 w-4" />
                       Personal criar meta
                     </Button>
+                  </div>
+                  <div className="space-y-3 rounded-lg border border-border/70 bg-background/40 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold">Metas automaticas</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Cria metas diarias e semanais automaticamente para o CLA.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleSaveAutomaticGoals}
+                        disabled={!socialState.clans.length || !goalClanManagedByCurrentUser}
+                      >
+                        Salvar automacoes
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2 rounded-md border border-border/70 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label htmlFor="auto-goal-daily-switch" className="text-xs font-medium">
+                          Meta diaria automatica
+                        </Label>
+                        <Switch
+                          id="auto-goal-daily-switch"
+                          checked={autoDailyGoalEnabled}
+                          onCheckedChange={setAutoDailyGoalEnabled}
+                          disabled={!socialState.clans.length || !goalClanManagedByCurrentUser}
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <Input
+                          value={autoDailyGoalTitle}
+                          onChange={(event) => setAutoDailyGoalTitle(event.target.value)}
+                          placeholder="Titulo diario"
+                          disabled={!socialState.clans.length || !goalClanManagedByCurrentUser || !autoDailyGoalEnabled}
+                        />
+                        <Input
+                          type="number"
+                          min="1"
+                          value={autoDailyGoalTargetValue}
+                          onChange={(event) => setAutoDailyGoalTargetValue(event.target.value)}
+                          placeholder="Alvo"
+                          disabled={!socialState.clans.length || !goalClanManagedByCurrentUser || !autoDailyGoalEnabled}
+                        />
+                        <Input
+                          value={autoDailyGoalUnit}
+                          onChange={(event) => setAutoDailyGoalUnit(event.target.value)}
+                          placeholder="Unidade"
+                          disabled={!socialState.clans.length || !goalClanManagedByCurrentUser || !autoDailyGoalEnabled}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 rounded-md border border-border/70 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label htmlFor="auto-goal-weekly-switch" className="text-xs font-medium">
+                          Meta semanal automatica
+                        </Label>
+                        <Switch
+                          id="auto-goal-weekly-switch"
+                          checked={autoWeeklyGoalEnabled}
+                          onCheckedChange={setAutoWeeklyGoalEnabled}
+                          disabled={!socialState.clans.length || !goalClanManagedByCurrentUser}
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <Input
+                          value={autoWeeklyGoalTitle}
+                          onChange={(event) => setAutoWeeklyGoalTitle(event.target.value)}
+                          placeholder="Titulo semanal"
+                          disabled={!socialState.clans.length || !goalClanManagedByCurrentUser || !autoWeeklyGoalEnabled}
+                        />
+                        <Input
+                          type="number"
+                          min="1"
+                          value={autoWeeklyGoalTargetValue}
+                          onChange={(event) => setAutoWeeklyGoalTargetValue(event.target.value)}
+                          placeholder="Alvo"
+                          disabled={!socialState.clans.length || !goalClanManagedByCurrentUser || !autoWeeklyGoalEnabled}
+                        />
+                        <Input
+                          value={autoWeeklyGoalUnit}
+                          onChange={(event) => setAutoWeeklyGoalUnit(event.target.value)}
+                          placeholder="Unidade"
+                          disabled={!socialState.clans.length || !goalClanManagedByCurrentUser || !autoWeeklyGoalEnabled}
+                        />
+                      </div>
+                    </div>
                   </div>
                 </form>
 
@@ -4780,8 +5542,14 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     <div>
                       <p className="font-semibold">{clan.name}</p>
                       <p className="text-xs text-muted-foreground">Criado em {formatDate(clan.createdAt)}</p>
+                      <p className="text-xs text-muted-foreground">Admin: {clan.adminName || 'Nao definido'}</p>
                     </div>
-                    <Badge variant="outline">{clan.memberIds.length} seguindo</Badge>
+                    <div className="space-y-1 text-right">
+                      <Badge variant="outline">{clan.memberIds.length} seguindo</Badge>
+                      <Badge variant={isCurrentProfileClanAdmin(clan) ? 'default' : 'secondary'}>
+                        {isCurrentProfileClanAdmin(clan) ? 'Voce admin' : 'Admin externo'}
+                      </Badge>
+                    </div>
                   </div>
                   {clan.description && <p className="text-sm text-muted-foreground">{clan.description}</p>}
 
@@ -4791,6 +5559,26 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       if (!friend) return null;
                       return <Badge key={friend.id} variant="secondary">{friend.name}</Badge>;
                     })}
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Metas automaticas</p>
+                    {!clan.autoGoalTemplates?.length && (
+                      <p className="text-sm text-muted-foreground">Sem configuracao automatica.</p>
+                    )}
+                    {(clan.autoGoalTemplates || []).map((template) => (
+                      <div key={template.id} className="flex items-center justify-between gap-3 rounded-md border border-border/70 p-2">
+                        <div className="min-w-0">
+                          <p className="line-clamp-1 text-sm font-medium">{template.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {template.frequency === 'daily' ? 'Diaria' : 'Semanal'}: {template.targetValue} {template.unit}
+                          </p>
+                        </div>
+                        <Badge variant={template.enabled ? 'default' : 'outline'}>
+                          {template.enabled ? 'Ativa' : 'Inativa'}
+                        </Badge>
+                      </div>
+                    ))}
                   </div>
 
                   <div className="space-y-2">
@@ -4812,7 +5600,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                         </p>
                         <div className="flex flex-wrap gap-2">
                           <Badge variant="secondary">
-                            {goal.createdBy === 'personal' ? 'Criada pelo Personal' : 'Criada por voce'}
+                            {goal.goalType === 'auto_daily'
+                              ? 'Automatica diaria'
+                              : goal.goalType === 'auto_weekly'
+                                ? 'Automatica semanal'
+                                : goal.createdBy === 'personal'
+                                  ? 'Criada pelo Personal'
+                                  : 'Criada por voce'}
                           </Badge>
                           {goal.scoredAt && (
                             <Badge variant="outline">Recompensa aplicada</Badge>
@@ -5421,6 +6215,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               );
               const postOwnedByMe =
                 normalizeHandle(post.authorHandle || post.authorName) === normalizedProfileHandle;
+              const topLevelComments = post.comments.filter((comment) => !comment.parentCommentId);
+              const repliesCount = Math.max(0, post.comments.length - topLevelComments.length);
 
               return (
                 <article key={post.id} className="social-feed-post">
@@ -5502,7 +6298,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                         </Button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {post.comments.length} comentario(s)
+                        {topLevelComments.length} comentario(s){repliesCount ? ` e ${repliesCount} resposta(s)` : ''}
                       </p>
                     </div>
 
@@ -5519,10 +6315,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                           Seja o primeiro a comentar.
                         </p>
                       )}
-                      {post.comments.map((comment) => {
+                      {topLevelComments.map((comment) => {
                         const likedCommentByMe = comment.likedByHandles.some(
                           (handle) => normalizeHandle(handle) === normalizedProfileHandle
                         );
+                        const replyComments = post.comments.filter(
+                          (candidate) => candidate.parentCommentId === comment.id
+                        );
+                        const isCommentReplyOpen = openReplyComposerByPostId[post.id] === comment.id;
+
                         return (
                           <div key={comment.id} className="rounded-lg border border-border/60 bg-card/45 p-2">
                             <div className="flex items-start justify-between gap-2">
@@ -5547,6 +6348,148 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                 {comment.likes}
                               </Button>
                             </div>
+
+                            <div className="mt-1 flex items-center gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 rounded-full px-2 text-[11px]"
+                                onClick={() => handleOpenReplyComposer(post.id, comment.id)}
+                              >
+                                Responder
+                              </Button>
+                            </div>
+
+                            {isCommentReplyOpen && (
+                              <form
+                                className="mt-2 flex items-center gap-2"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  handleAddPostComment(post.id, comment.id);
+                                }}
+                              >
+                                <Input
+                                  value={replyCommentInputs[comment.id] || ''}
+                                  onChange={(event) =>
+                                    setReplyCommentInputs((previous) => ({
+                                      ...previous,
+                                      [comment.id]: event.target.value,
+                                    }))
+                                  }
+                                  placeholder={`Responder ${comment.authorName}...`}
+                                  className="h-8 rounded-full bg-secondary/65 text-xs"
+                                />
+                                <Button
+                                  type="submit"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 rounded-full px-2"
+                                  disabled={!(replyCommentInputs[comment.id] || '').trim()}
+                                >
+                                  <Send className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-8 rounded-full px-2 text-xs"
+                                  onClick={() => handleCloseReplyComposer(post.id)}
+                                >
+                                  Cancelar
+                                </Button>
+                              </form>
+                            )}
+
+                            {!!replyComments.length && (
+                              <div className="mt-2 space-y-2 border-l border-border/70 pl-3">
+                                {replyComments.map((reply) => {
+                                  const likedReplyByMe = reply.likedByHandles.some(
+                                    (handle) => normalizeHandle(handle) === normalizedProfileHandle
+                                  );
+                                  const isReplyComposerOpen = openReplyComposerByPostId[post.id] === reply.id;
+
+                                  return (
+                                    <div key={reply.id} className="rounded-md border border-border/60 bg-background/55 p-2">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                          <p className="text-xs font-semibold">
+                                            {reply.authorName}{' '}
+                                            <span className="text-muted-foreground">{reply.authorHandle}</span>
+                                          </p>
+                                          <p className="text-sm">{reply.text}</p>
+                                          <p className="text-[11px] text-muted-foreground">
+                                            {formatDateTime(reply.createdAt)}
+                                          </p>
+                                        </div>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant={likedReplyByMe ? 'default' : 'ghost'}
+                                          className="h-7 min-w-7 rounded-full px-2"
+                                          onClick={() => handleLikeComment(post.id, reply.id)}
+                                        >
+                                          <Heart className="h-3.5 w-3.5" />
+                                          {reply.likes}
+                                        </Button>
+                                      </div>
+
+                                      <div className="mt-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="ghost"
+                                          className="h-7 rounded-full px-2 text-[11px]"
+                                          onClick={() => handleOpenReplyComposer(post.id, reply.id)}
+                                        >
+                                          Responder
+                                        </Button>
+                                      </div>
+
+                                      {isReplyComposerOpen && (
+                                        <form
+                                          className="mt-2 flex items-center gap-2"
+                                          onSubmit={(event) => {
+                                            event.preventDefault();
+                                            handleAddPostComment(post.id, reply.id);
+                                          }}
+                                        >
+                                          <Input
+                                            value={replyCommentInputs[reply.id] || ''}
+                                            onChange={(event) =>
+                                              setReplyCommentInputs((previous) => ({
+                                                ...previous,
+                                                [reply.id]: event.target.value,
+                                              }))
+                                            }
+                                            placeholder={`Responder ${reply.authorName}...`}
+                                            className="h-8 rounded-full bg-secondary/65 text-xs"
+                                          />
+                                          <Button
+                                            type="submit"
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-8 rounded-full px-2"
+                                            disabled={!(replyCommentInputs[reply.id] || '').trim()}
+                                          >
+                                            <Send className="h-3.5 w-3.5" />
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-8 rounded-full px-2 text-xs"
+                                            onClick={() => handleCloseReplyComposer(post.id)}
+                                          >
+                                            Cancelar
+                                          </Button>
+                                        </form>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
