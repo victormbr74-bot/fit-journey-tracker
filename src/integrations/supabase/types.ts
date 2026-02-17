@@ -258,6 +258,7 @@ export type Database = {
         Returns: boolean
       }
       normalize_profile_handle: { Args: { input_text: string }; Returns: string }
+      normalize_profile_phone: { Args: { input_text: string }; Returns: string }
       reserve_unique_profile_handle: {
         Args: { seed_input: string; exclude_profile_id?: string | null }
         Returns: string
@@ -272,6 +273,20 @@ export type Database = {
           goal: string | null
           handle: string
           name: string
+          profile_id: string
+        }[]
+      }
+      search_profiles_by_phone: {
+        Args: {
+          phones_input: string[]
+          limit_count?: number | null
+          exclude_profile_id?: string | null
+        }
+        Returns: {
+          goal: string | null
+          handle: string
+          name: string
+          phone: string | null
           profile_id: string
         }[]
       }

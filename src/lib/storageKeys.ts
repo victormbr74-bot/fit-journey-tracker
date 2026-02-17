@@ -11,3 +11,4 @@ export const SOCIAL_GLOBAL_FRIEND_REQUESTS_STORAGE_KEY = 'fit-journey.social-fri
 export const SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY = 'fit-journey.social-chat-events.global';
 export const SOCIAL_SEEN_CHAT_EVENTS_STORAGE_PREFIX = 'fit-journey.social-chat-events.seen.';
 export const SOCIAL_SEEN_FRIEND_REQUESTS_STORAGE_PREFIX = 'fit-journey.social-friend-requests.seen.';
+export const SOCIAL_CHAT_SETTINGS_STORAGE_PREFIX = 'fit-journey.social-chat-settings.';

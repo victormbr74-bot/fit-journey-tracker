@@ -2,6 +2,8 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 import {
   BellRing,
   Camera,
+  ChevronLeft,
+  ChevronRight,
   Check,
   CheckCheck,
   CheckCircle2,
@@ -9,13 +11,17 @@ import {
   Heart,
   ImagePlus,
   Instagram,
+  Loader2,
   MessageCircle,
+  Pencil,
   Plus,
   Search,
   Send,
   Share2,
+  Smartphone,
   Target,
   Trophy,
+  Trash2,
   UserMinus,
   UserPlus,
   Users,
@@ -24,6 +30,7 @@ import {
 import { toast } from 'sonner';
 
 import {
+  SOCIAL_CHAT_SETTINGS_STORAGE_PREFIX,
   SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY,
   SOCIAL_GLOBAL_FEED_STORAGE_KEY,
   SOCIAL_GLOBAL_FRIEND_REQUESTS_STORAGE_KEY,
@@ -69,6 +76,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
@@ -93,6 +101,49 @@ interface RemoteProfileSearchResult {
   name: string | null;
   handle: string;
   goal: string | null;
+}
+
+interface RemotePhoneProfileSearchResult {
+  profile_id: string;
+  name: string | null;
+  handle: string;
+  goal: string | null;
+  phone: string | null;
+}
+
+interface ContactPickerResult {
+  name?: string[];
+  tel?: string[];
+}
+
+type NavigatorWithContacts = Navigator & {
+  contacts?: {
+    select: (
+      properties: Array<'name' | 'tel'>,
+      options?: { multiple?: boolean }
+    ) => Promise<ContactPickerResult[]>;
+  };
+};
+
+interface DevicePhoneContact {
+  name: string;
+  phone: string;
+  normalizedPhone: string;
+}
+
+interface MatchedPhoneContact {
+  id: string;
+  contactName: string;
+  contactPhone: string;
+  profile: DiscoverableProfile;
+}
+
+interface StoryGroup {
+  authorHandle: string;
+  authorName: string;
+  previewImageDataUrl: string;
+  latestCreatedAt: string;
+  stories: SocialStory[];
 }
 
 interface SocialGlobalSnapshot {
@@ -136,9 +187,17 @@ const SEEN_FRIEND_REQUEST_LIMIT = 1200;
 const STORY_DURATION_HOURS = 24;
 const SOCIAL_GLOBAL_STATE_ID = true;
 const GLOBAL_SYNC_POLL_INTERVAL_MS = 3500;
+const PHONE_REGEX = /^[0-9()+\-\s]{8,20}$/;
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const sanitizeHandleInput = (value: string) => sanitizeHandleBody(value);
+const normalizePhoneDigits = (value: string) => value.replace(/\D+/g, '');
+const isValidPhoneInput = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed || !PHONE_REGEX.test(trimmed)) return false;
+  const normalized = normalizePhoneDigits(trimmed);
+  return normalized.length >= 8 && normalized.length <= 20;
+};
 
 const formatDateTime = (isoDate: string) => {
   const date = new Date(isoDate);
@@ -391,6 +450,28 @@ const mapRemoteProfilesToDiscoverable = (
     })
     .filter((item): item is DiscoverableProfile => Boolean(item));
 
+const mapRemotePhoneProfilesToDiscoverable = (
+  rows: RemotePhoneProfileSearchResult[],
+  normalizedProfileHandle: string
+): (DiscoverableProfile & { phone: string })[] =>
+  rows
+    .map((item) => {
+      const normalizedHandle = normalizeHandle(item.handle);
+      const normalizedPhone = normalizePhoneDigits(item.phone || '');
+      if (!normalizedHandle || normalizedHandle === normalizedProfileHandle || !normalizedPhone) return null;
+
+      const fallbackName = item.name?.trim() || toHandle(item.handle);
+      return {
+        profileId: item.profile_id,
+        handle: toHandle(item.handle),
+        normalizedHandle,
+        name: fallbackName,
+        goal: resolveGoalLabel(item.goal),
+        phone: normalizedPhone,
+      } as DiscoverableProfile & { phone: string };
+    })
+    .filter((item): item is DiscoverableProfile & { phone: string } => Boolean(item));
+
 const sanitizeChatMessages = (messages: unknown): SocialChatMessage[] => {
   if (!Array.isArray(messages)) return [];
 
@@ -462,7 +543,7 @@ const notificationTypeLabel: Record<SocialNotificationType, string> = {
   goal: 'Meta',
   challenge: 'Desafio',
   post: 'Feed',
-  chat: 'Chat',
+  chat: 'FitChat',
   system: 'Sistema',
 };
 
@@ -500,11 +581,20 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     () => `${SOCIAL_SEEN_FRIEND_REQUESTS_STORAGE_PREFIX}${profile.id}`,
     [profile.id]
   );
+  const chatSettingsStorageKey = useMemo(
+    () => `${SOCIAL_CHAT_SETTINGS_STORAGE_PREFIX}${profile.id}`,
+    [profile.id]
+  );
   const profileHandle = useMemo(
     () => profile.handle || toHandle(profile.name || profile.email || 'fit.user'),
     [profile.email, profile.handle, profile.name]
   );
   const normalizedProfileHandle = useMemo(() => normalizeHandle(profileHandle), [profileHandle]);
+  const contactPickerSupported = useMemo(() => {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+    const navigatorWithContacts = navigator as NavigatorWithContacts;
+    return typeof navigatorWithContacts.contacts?.select === 'function';
+  }, []);
 
   const [socialState, setSocialState] = useState<SocialState>(EMPTY_SOCIAL_STATE);
   const [globalPosts, setGlobalPosts] = useState<SocialFeedPost[]>([]);
@@ -547,6 +637,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [feedShareFriendId, setFeedShareFriendId] = useState('');
   const [chatInput, setChatInput] = useState('');
   const [chatEventsLoaded, setChatEventsLoaded] = useState(false);
+  const [chatFriendSearch, setChatFriendSearch] = useState('');
+  const [pendingChatFriendId, setPendingChatFriendId] = useState('');
+  const [keepChatHistory, setKeepChatHistory] = useState(true);
+  const [chatHistoryPreferenceLoaded, setChatHistoryPreferenceLoaded] = useState(false);
 
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [sharePostId, setSharePostId] = useState('');
@@ -562,7 +656,16 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [composerCaption, setComposerCaption] = useState('');
   const [composerImageDataUrl, setComposerImageDataUrl] = useState('');
   const [processingComposerImage, setProcessingComposerImage] = useState(false);
-  const [activeStoryId, setActiveStoryId] = useState('');
+  const [activeStoryGroupHandle, setActiveStoryGroupHandle] = useState('');
+  const [activeStoryIndex, setActiveStoryIndex] = useState(0);
+  const [matchedPhoneContacts, setMatchedPhoneContacts] = useState<MatchedPhoneContact[]>([]);
+  const [isImportingContacts, setIsImportingContacts] = useState(false);
+  const [importedContactsCount, setImportedContactsCount] = useState(0);
+
+  const [isEditContentDialogOpen, setIsEditContentDialogOpen] = useState(false);
+  const [editingPostId, setEditingPostId] = useState('');
+  const [editingStoryId, setEditingStoryId] = useState('');
+  const [editingContentCaption, setEditingContentCaption] = useState('');
 
   const composerGalleryInputRef = useRef<HTMLInputElement | null>(null);
   const composerCameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -573,12 +676,32 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const lastGlobalSnapshotHashRef = useRef('');
   const notifiedRemoteSyncUnavailableRef = useRef(false);
 
-  const triggerSystemNotification = useCallback((title: string, description: string) => {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification(title, { body: description });
-    }
+  const triggerSystemNotification = useCallback(async (title: string, description: string) => {
     if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
       navigator.vibrate([70, 40, 90]);
+    }
+
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+    try {
+      if ('serviceWorker' in navigator) {
+        const registration = await navigator.serviceWorker.getRegistration();
+        if (registration) {
+          await registration.showNotification(title, {
+            body: description,
+            tag: `fitchat-${Date.now()}`,
+            renotify: true,
+            icon: '/favicon.png',
+            badge: '/favicon.png',
+          });
+          return;
+        }
+      }
+
+      new Notification(title, { body: description });
+    } catch (error) {
+      console.error('Erro ao disparar notificacao nativa:', error);
+      new Notification(title, { body: description });
     }
   }, []);
 
@@ -599,7 +722,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }));
 
     if (notifySystem) {
-      triggerSystemNotification(nextNotification.title, nextNotification.description);
+      void triggerSystemNotification(nextNotification.title, nextNotification.description);
     }
   }, [triggerSystemNotification]);
 
@@ -612,7 +735,35 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     lastGlobalSnapshotHashRef.current = '';
     setRemoteGlobalSyncEnabled(isSocialGlobalStateAvailable());
     notifiedRemoteSyncUnavailableRef.current = false;
+    setChatHistoryPreferenceLoaded(false);
   }, [profile.id]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(chatSettingsStorageKey);
+      if (!stored) {
+        setKeepChatHistory(true);
+        setChatHistoryPreferenceLoaded(true);
+        return;
+      }
+
+      const parsed = JSON.parse(stored) as { keepHistory?: unknown };
+      setKeepChatHistory(parsed.keepHistory !== false);
+    } catch (error) {
+      console.error('Erro ao carregar preferencias do FitChat:', error);
+      setKeepChatHistory(true);
+    } finally {
+      setChatHistoryPreferenceLoaded(true);
+    }
+  }, [chatSettingsStorageKey]);
+
+  useEffect(() => {
+    if (!chatHistoryPreferenceLoaded) return;
+    window.localStorage.setItem(
+      chatSettingsStorageKey,
+      JSON.stringify({ keepHistory: keepChatHistory })
+    );
+  }, [chatSettingsStorageKey, chatHistoryPreferenceLoaded, keepChatHistory]);
 
   useEffect(() => {
     if (remoteGlobalSyncEnabled) {
@@ -915,6 +1066,34 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   }, [fetchRemoteGlobalSnapshot, remoteGlobalSyncEnabled]);
 
   useEffect(() => {
+    if (!remoteGlobalSyncEnabled) return;
+
+    const channel = supabase
+      .channel(`social-global-state-${profile.id}-${createId()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'social_global_state',
+          filter: 'id=eq.true',
+        },
+        () => {
+          void fetchRemoteGlobalSnapshot();
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          void fetchRemoteGlobalSnapshot();
+        }
+      });
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [fetchRemoteGlobalSnapshot, profile.id, remoteGlobalSyncEnabled]);
+
+  useEffect(() => {
     if (!remoteSnapshotLoaded) return;
     if (!remoteGlobalSyncEnabled) return;
 
@@ -979,6 +1158,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   ]);
 
   useEffect(() => {
+    if (!chatHistoryPreferenceLoaded) return;
+
     const stored = window.localStorage.getItem(storageKey);
     if (!stored) {
       setSocialState(EMPTY_SOCIAL_STATE);
@@ -1018,7 +1199,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         friends: parsedFriends,
         clans: parsed.clans || [],
         posts: [],
-        chatMessages: sanitizeChatMessages(parsed.chatMessages),
+        chatMessages: keepChatHistory ? sanitizeChatMessages(parsed.chatMessages) : [],
         notifications: parsed.notifications || [],
       });
       if (legacyPosts.length) {
@@ -1031,13 +1212,31 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
 
     setLoadedStorageKey(storageKey);
-  }, [storageKey]);
+  }, [chatHistoryPreferenceLoaded, keepChatHistory, storageKey]);
 
   useEffect(() => {
+    if (!chatHistoryPreferenceLoaded) return;
     if (loadedStorageKey !== storageKey) return;
     const { posts: _ignoredPosts, ...stateWithoutPosts } = socialState;
-    window.localStorage.setItem(storageKey, JSON.stringify(stateWithoutPosts));
-  }, [socialState, storageKey, loadedStorageKey]);
+    const nextPersistedState = keepChatHistory
+      ? stateWithoutPosts
+      : { ...stateWithoutPosts, chatMessages: [] as SocialChatMessage[] };
+    window.localStorage.setItem(storageKey, JSON.stringify(nextPersistedState));
+  }, [
+    chatHistoryPreferenceLoaded,
+    keepChatHistory,
+    socialState,
+    storageKey,
+    loadedStorageKey,
+  ]);
+
+  useEffect(() => {
+    if (!chatHistoryPreferenceLoaded || keepChatHistory) return;
+    setSocialState((previous) => {
+      if (!previous.chatMessages.length) return previous;
+      return { ...previous, chatMessages: [] };
+    });
+  }, [chatHistoryPreferenceLoaded, keepChatHistory]);
 
   useEffect(() => {
     if (!socialState.clans.length) {
@@ -1089,6 +1288,22 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         (request) => request.status === 'pending' && request.senderProfileId === profile.id
       ),
     [friendRequests, profile.id]
+  );
+
+  const outgoingPendingHandles = useMemo(
+    () =>
+      new Set(
+        outgoingPendingFriendRequests.map((request) => normalizeHandle(request.receiverHandle))
+      ),
+    [outgoingPendingFriendRequests]
+  );
+
+  const incomingPendingHandles = useMemo(
+    () =>
+      new Set(
+        incomingFriendRequests.map((request) => normalizeHandle(request.senderHandle))
+      ),
+    [incomingFriendRequests]
   );
 
   useEffect(() => {
@@ -1218,6 +1433,154 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     return mapRemoteProfilesToDiscoverable(mappedRows, normalizedProfileHandle);
   }, [normalizedProfileHandle, profile.id]);
+
+  const fetchRemoteProfilesByPhone = useCallback(async (
+    phoneInputs: string[],
+    limitCount = 120
+  ): Promise<(DiscoverableProfile & { phone: string })[]> => {
+    const normalizedPhones = Array.from(
+      new Set(
+        phoneInputs
+          .map((phone) => normalizePhoneDigits(phone))
+          .filter((phone) => phone.length >= 8 && phone.length <= 20)
+      )
+    );
+    if (!normalizedPhones.length) return [];
+
+    const { data, error } = await supabase.rpc('search_profiles_by_phone', {
+      phones_input: normalizedPhones,
+      limit_count: limitCount,
+      exclude_profile_id: profile.id,
+    });
+
+    if (!error && Array.isArray(data)) {
+      return mapRemotePhoneProfilesToDiscoverable(data, normalizedProfileHandle);
+    }
+
+    if (error && !isMissingRpcFunctionError(error)) {
+      console.error('Erro ao buscar perfis por celular (rpc):', error);
+    }
+
+    const { data: fallbackRows, error: fallbackError } = await supabase
+      .from('profiles')
+      .select('id, name, handle, goal, phone')
+      .neq('id', profile.id)
+      .not('phone', 'is', null)
+      .order('updated_at', { ascending: false })
+      .limit(limitCount);
+
+    if (fallbackError) {
+      console.error('Erro ao buscar perfis por celular (fallback):', fallbackError);
+      return [];
+    }
+
+    const normalizedSet = new Set(normalizedPhones);
+    const mappedRows: RemotePhoneProfileSearchResult[] = (fallbackRows || [])
+      .filter((row) => normalizedSet.has(normalizePhoneDigits(row.phone || '')))
+      .map((row) => ({
+        profile_id: row.id,
+        name: row.name,
+        handle: row.handle,
+        goal: row.goal,
+        phone: row.phone,
+      }));
+
+    return mapRemotePhoneProfilesToDiscoverable(mappedRows, normalizedProfileHandle);
+  }, [normalizedProfileHandle, profile.id]);
+
+  const handleImportDeviceContacts = async () => {
+    if (!contactPickerSupported) {
+      toast.error('Leitura de contatos nao suportada neste dispositivo/navegador.');
+      return;
+    }
+
+    const navigatorWithContacts = navigator as NavigatorWithContacts;
+    if (!navigatorWithContacts.contacts?.select) {
+      toast.error('Leitura de contatos nao suportada neste dispositivo/navegador.');
+      return;
+    }
+
+    setIsImportingContacts(true);
+    try {
+      const pickedContacts = await navigatorWithContacts.contacts.select(['name', 'tel'], {
+        multiple: true,
+      });
+
+      const collectedContacts: DevicePhoneContact[] = [];
+      pickedContacts.forEach((contact, index) => {
+        const fallbackName = `Contato ${index + 1}`;
+        const contactName =
+          (Array.isArray(contact.name) && contact.name.find((name) => name?.trim())?.trim()) ||
+          fallbackName;
+        const phones = Array.isArray(contact.tel) ? contact.tel : [];
+
+        phones.forEach((rawPhone) => {
+          const trimmedPhone = (rawPhone || '').trim();
+          if (!trimmedPhone || !isValidPhoneInput(trimmedPhone)) return;
+          const normalizedPhone = normalizePhoneDigits(trimmedPhone);
+          collectedContacts.push({
+            name: contactName,
+            phone: trimmedPhone,
+            normalizedPhone,
+          });
+        });
+      });
+
+      const uniqueContactsMap = new Map<string, DevicePhoneContact>();
+      collectedContacts.forEach((contact) => {
+        if (uniqueContactsMap.has(contact.normalizedPhone)) return;
+        uniqueContactsMap.set(contact.normalizedPhone, contact);
+      });
+
+      const uniqueContacts = Array.from(uniqueContactsMap.values());
+      setImportedContactsCount(uniqueContacts.length);
+
+      if (!uniqueContacts.length) {
+        setMatchedPhoneContacts([]);
+        toast.info('Nenhum celular valido encontrado nos contatos selecionados.');
+        return;
+      }
+
+      const matchingProfiles = await fetchRemoteProfilesByPhone(
+        uniqueContacts.map((contact) => contact.normalizedPhone),
+        200
+      );
+
+      const profilesByPhone = new Map<string, DiscoverableProfile>();
+      matchingProfiles.forEach((profileMatch) => {
+        if (profilesByPhone.has(profileMatch.phone)) return;
+        profilesByPhone.set(profileMatch.phone, profileMatch);
+      });
+
+      const nextMatchedContacts = uniqueContacts
+        .map((contact) => {
+          const match = profilesByPhone.get(contact.normalizedPhone);
+          if (!match) return null;
+          return {
+            id: `${contact.normalizedPhone}-${match.profileId || match.normalizedHandle}`,
+            contactName: contact.name,
+            contactPhone: contact.phone,
+            profile: match,
+          } as MatchedPhoneContact;
+        })
+        .filter((match): match is MatchedPhoneContact => Boolean(match))
+        .sort((a, b) => a.contactName.localeCompare(b.contactName));
+
+      setMatchedPhoneContacts(nextMatchedContacts);
+      if (!nextMatchedContacts.length) {
+        toast.info('Nenhum contato encontrado no SouFit.');
+        return;
+      }
+
+      toast.success(`${nextMatchedContacts.length} contato(s) encontrado(s) no SouFit.`);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      console.error('Erro ao importar contatos:', error);
+      toast.error('Nao foi possivel ler os contatos do aparelho.');
+    } finally {
+      setIsImportingContacts(false);
+    }
+  };
 
   const friendHandleSearch = useMemo(() => sanitizeHandleInput(friendHandle), [friendHandle]);
 
@@ -1404,13 +1767,6 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     });
   }, [relatedAcceptedRequests, profile.id, normalizedProfileHandle]);
 
-  useEffect(() => {
-    if (!activeStoryId) return;
-    if (!globalStories.some((story) => story.id === activeStoryId && isStoryActive(story))) {
-      setActiveStoryId('');
-    }
-  }, [globalStories, activeStoryId]);
-
   const unreadNotifications = useMemo(
     () =>
       socialState.notifications.filter((notification) => !notification.read).length +
@@ -1431,14 +1787,16 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     [socialState.friends]
   );
 
+  const activeStories = useMemo(() => sanitizeStories(globalStories), [globalStories]);
+
   const postsById = useMemo(
     () => new Map(globalPosts.map((post) => [post.id, post])),
     [globalPosts]
   );
 
   const storiesById = useMemo(
-    () => new Map(sanitizeStories(globalStories).map((story) => [story.id, story])),
-    [globalStories]
+    () => new Map(activeStories.map((story) => [story.id, story])),
+    [activeStories]
   );
 
   const sharePost = useMemo(
@@ -1447,9 +1805,21 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   );
 
   const shareStory = useMemo(
-    () => sanitizeStories(globalStories).find((story) => story.id === shareStoryId) ?? null,
-    [globalStories, shareStoryId]
+    () => activeStories.find((story) => story.id === shareStoryId) ?? null,
+    [activeStories, shareStoryId]
   );
+
+  const editingPost = useMemo(
+    () => globalPosts.find((post) => post.id === editingPostId) ?? null,
+    [editingPostId, globalPosts]
+  );
+
+  const editingStory = useMemo(
+    () => activeStories.find((story) => story.id === editingStoryId) ?? null,
+    [activeStories, editingStoryId]
+  );
+
+  const editingContentTarget = editingPost || editingStory;
 
   const filteredShareFriends = useMemo(() => {
     const query = shareSearch.trim().toLowerCase();
@@ -1484,11 +1854,81 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     });
   }, [feedSearch, globalPosts]);
 
-  const activeStories = useMemo(() => sanitizeStories(globalStories), [globalStories]);
+  const storyGroups = useMemo(() => {
+    const groups = new Map<string, StoryGroup>();
+    activeStories.forEach((story) => {
+      const authorHandle = normalizeHandle(story.authorHandle || story.authorName || story.id);
+      if (!authorHandle) return;
 
-  const activeStory = useMemo(
-    () => activeStories.find((story) => story.id === activeStoryId) ?? null,
-    [activeStories, activeStoryId]
+      const current = groups.get(authorHandle);
+      if (!current) {
+        groups.set(authorHandle, {
+          authorHandle,
+          authorName: story.authorName,
+          previewImageDataUrl: story.imageDataUrl,
+          latestCreatedAt: story.createdAt,
+          stories: [story],
+        });
+        return;
+      }
+
+      current.stories.push(story);
+      if (new Date(story.createdAt).getTime() > new Date(current.latestCreatedAt).getTime()) {
+        current.latestCreatedAt = story.createdAt;
+        current.previewImageDataUrl = story.imageDataUrl;
+      }
+      if (current.authorName.startsWith('@') && !story.authorName.startsWith('@')) {
+        current.authorName = story.authorName;
+      }
+    });
+
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        stories: [...group.stories].sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        ),
+      }))
+      .sort((a, b) => new Date(b.latestCreatedAt).getTime() - new Date(a.latestCreatedAt).getTime());
+  }, [activeStories]);
+
+  useEffect(() => {
+    if (!activeStoryGroupHandle) return;
+    const group = storyGroups.find((item) => item.authorHandle === activeStoryGroupHandle);
+    if (!group) {
+      setActiveStoryGroupHandle('');
+      setActiveStoryIndex(0);
+      return;
+    }
+
+    if (activeStoryIndex < group.stories.length) return;
+    setActiveStoryIndex(Math.max(0, group.stories.length - 1));
+  }, [activeStoryGroupHandle, activeStoryIndex, storyGroups]);
+
+  const activeStoryGroup = useMemo(
+    () => storyGroups.find((group) => group.authorHandle === activeStoryGroupHandle) ?? null,
+    [activeStoryGroupHandle, storyGroups]
+  );
+
+  const activeStory = useMemo(() => {
+    if (!activeStoryGroup) return null;
+    if (!activeStoryGroup.stories.length) return null;
+    const safeIndex = Math.min(Math.max(activeStoryIndex, 0), activeStoryGroup.stories.length - 1);
+    return activeStoryGroup.stories[safeIndex] ?? null;
+  }, [activeStoryGroup, activeStoryIndex]);
+
+  const isActiveStoryOwnedByMe = useMemo(
+    () =>
+      Boolean(
+        activeStory &&
+        normalizeHandle(activeStory.authorHandle || activeStory.authorName) === normalizedProfileHandle
+      ),
+    [activeStory, normalizedProfileHandle]
+  );
+
+  const canMoveToPreviousStory = Boolean(activeStoryGroup && activeStoryIndex > 0);
+  const canMoveToNextStory = Boolean(
+    activeStoryGroup && activeStoryIndex < activeStoryGroup.stories.length - 1
   );
 
   const activeChatMessages = useMemo(
@@ -1503,6 +1943,35 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     () => socialState.friends.find((friend) => friend.id === activeChatFriendId) ?? null,
     [socialState.friends, activeChatFriendId]
   );
+
+  const filteredChatFriends = useMemo(() => {
+    const query = chatFriendSearch.trim().toLowerCase();
+    if (!query) return socialState.friends;
+
+    return socialState.friends.filter((friend) => {
+      const name = (friend.name || '').toLowerCase();
+      const handle = toHandle(friend.handle || friend.name || 'fit.user').toLowerCase();
+      return name.includes(query) || handle.includes(query);
+    });
+  }, [chatFriendSearch, socialState.friends]);
+
+  useEffect(() => {
+    if (!socialState.friends.length) {
+      setPendingChatFriendId('');
+      return;
+    }
+
+    if (pendingChatFriendId && socialState.friends.some((friend) => friend.id === pendingChatFriendId)) {
+      return;
+    }
+
+    if (activeChatFriendId && socialState.friends.some((friend) => friend.id === activeChatFriendId)) {
+      setPendingChatFriendId(activeChatFriendId);
+      return;
+    }
+
+    setPendingChatFriendId(socialState.friends[0].id);
+  }, [activeChatFriendId, pendingChatFriendId, socialState.friends]);
 
   useEffect(() => {
     if (!chatEventsLoaded) return;
@@ -1634,7 +2103,14 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      toast.success('Notificacoes do navegador ativadas.');
+      if ('serviceWorker' in navigator) {
+        try {
+          await navigator.serviceWorker.ready;
+        } catch {
+          // Se falhar, segue com notificacao web padrao.
+        }
+      }
+      toast.success('Notificacoes do FitChat ativadas no celular/navegador.');
       return;
     }
     toast.error('Permissao de notificacoes nao concedida.');
@@ -1654,56 +2130,59 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }
   };
 
-  const handleAddFriend = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
+  const requestFollowByHandle = async (
+    rawHandle: string,
+    options?: { preferredName?: string; preferredGoal?: string; clearInputs?: boolean }
+  ) => {
     if (remoteGlobalSyncEnabled && !remoteSnapshotLoaded) {
       toast.error('Aguarde a sincronizacao inicial da comunidade e tente novamente.');
-      return;
+      return false;
     }
 
     if (!remoteGlobalSyncEnabled) {
       toast.error('Nao foi possivel sincronizar pedidos. Atualize as migrations do Supabase.');
-      return;
+      return false;
     }
 
-    const receiverHandleValue = sanitizeHandleInput(friendHandle);
+    const receiverHandleValue = sanitizeHandleInput(rawHandle);
     if (!receiverHandleValue) {
       toast.error('Informe o @usuario para seguir.');
-      return;
+      return false;
     }
     if (receiverHandleValue.length < 3) {
       toast.error('Digite pelo menos 3 caracteres do @usuario.');
-      return;
+      return false;
     }
 
     if (receiverHandleValue === normalizedProfileHandle) {
       toast.error('Nao e possivel seguir voce mesmo.');
-      return;
+      return false;
     }
 
     const targetProfile = await resolveDiscoverableProfileByHandle(receiverHandleValue);
     if (!targetProfile?.profileId) {
       toast.error('Perfil nao encontrado. Use o @usuario exato para enviar o pedido.');
-      return;
+      return false;
     }
 
     const receiverProfileId = targetProfile.profileId;
     if (receiverProfileId === profile.id) {
       toast.error('Nao e possivel seguir voce mesmo.');
-      return;
+      return false;
     }
 
-    const receiverNameCandidate = friendName.trim() || targetProfile?.name || receiverHandleValue;
+    const receiverNameCandidate =
+      options?.preferredName?.trim() || friendName.trim() || targetProfile?.name || receiverHandleValue;
     const receiverName = receiverNameCandidate.startsWith('@')
       ? receiverNameCandidate.slice(1)
       : receiverNameCandidate;
-    const receiverGoalLabel = friendGoal.trim() || targetProfile?.goal || 'Sem meta definida';
+    const receiverGoalLabel =
+      options?.preferredGoal?.trim() || friendGoal.trim() || targetProfile?.goal || 'Sem meta definida';
     const receiverHandle = toHandle(targetProfile?.handle || receiverHandleValue);
 
     if (socialState.friends.some((friend) => normalizeHandle(friend.handle) === receiverHandleValue)) {
       toast.error('Voce ja segue esse usuario.');
-      return;
+      return false;
     }
 
     const hasOutgoingPending = friendRequests.some(
@@ -1720,7 +2199,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     if (hasOutgoingPending) {
       toast.error('Solicitacao para seguir ja enviada para esse usuario.');
-      return;
+      return false;
     }
 
     const hasIncomingPending = friendRequests.some(
@@ -1738,7 +2217,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     if (hasIncomingPending) {
       toast.info('Esse usuario ja solicitou seguir voce. Aceite na lista de recebidas.');
-      return;
+      return false;
     }
 
     const nextRequest: SocialFriendRequest = {
@@ -1762,10 +2241,29 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       description: `Aguardando ${receiverName} aceitar seu pedido para seguir.`,
     });
 
-    setFriendName('');
-    setFriendHandle('');
-    setFriendGoal('');
+    if (options?.clearInputs) {
+      setFriendName('');
+      setFriendHandle('');
+      setFriendGoal('');
+    }
     toast.success('Solicitacao para seguir enviada.');
+    return true;
+  };
+
+  const handleAddFriend = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await requestFollowByHandle(friendHandle, {
+      preferredName: friendName,
+      preferredGoal: friendGoal,
+      clearInputs: true,
+    });
+  };
+
+  const handleFollowMatchedContact = async (match: MatchedPhoneContact) => {
+    await requestFollowByHandle(match.profile.handle, {
+      preferredName: match.profile.name,
+      preferredGoal: match.profile.goal,
+    });
   };
 
   const handleAcceptFriendRequest = (requestId: string) => {
@@ -2203,6 +2701,122 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     );
   };
 
+  const openStoryGroup = (groupHandle: string, storyIndex = 0) => {
+    setActiveStoryGroupHandle(groupHandle);
+    setActiveStoryIndex(Math.max(0, storyIndex));
+  };
+
+  const handleMoveStoryWithinGroup = (step: -1 | 1) => {
+    if (!activeStoryGroup) return;
+    const nextIndex = activeStoryIndex + step;
+    if (nextIndex < 0 || nextIndex >= activeStoryGroup.stories.length) return;
+    setActiveStoryIndex(nextIndex);
+  };
+
+  const closeActiveStoryDialog = () => {
+    setActiveStoryGroupHandle('');
+    setActiveStoryIndex(0);
+  };
+
+  const openEditPostDialog = (post: SocialFeedPost) => {
+    setEditingPostId(post.id);
+    setEditingStoryId('');
+    setEditingContentCaption(post.caption);
+    setIsEditContentDialogOpen(true);
+  };
+
+  const openEditStoryDialog = (story: SocialStory, closeViewer = false) => {
+    setEditingStoryId(story.id);
+    setEditingPostId('');
+    setEditingContentCaption(story.caption || '');
+    setIsEditContentDialogOpen(true);
+    if (closeViewer) {
+      closeActiveStoryDialog();
+    }
+  };
+
+  const closeEditContentDialog = () => {
+    setIsEditContentDialogOpen(false);
+    setEditingPostId('');
+    setEditingStoryId('');
+    setEditingContentCaption('');
+  };
+
+  const handleSaveEditedContent = () => {
+    if (editingPostId) {
+      const trimmedCaption = editingContentCaption.trim();
+      if (!trimmedCaption) {
+        toast.error('A legenda do post nao pode ficar vazia.');
+        return;
+      }
+      setGlobalPosts((previous) =>
+        previous.map((post) =>
+          post.id === editingPostId ? { ...post, caption: trimmedCaption } : post
+        )
+      );
+      toast.success('Post atualizado.');
+      closeEditContentDialog();
+      return;
+    }
+
+    if (editingStoryId) {
+      const trimmedCaption = editingContentCaption.trim();
+      setGlobalStories((previous) =>
+        previous.map((story) =>
+          story.id === editingStoryId ? { ...story, caption: trimmedCaption } : story
+        )
+      );
+      toast.success('Story atualizada.');
+      closeEditContentDialog();
+      return;
+    }
+
+    closeEditContentDialog();
+  };
+
+  const handleDeletePost = (postId: string) => {
+    const post = globalPosts.find((item) => item.id === postId);
+    if (!post) return;
+
+    const isOwner = normalizeHandle(post.authorHandle || post.authorName) === normalizedProfileHandle;
+    if (!isOwner) {
+      toast.error('Voce so pode excluir seus proprios posts.');
+      return;
+    }
+
+    const confirmed = window.confirm('Excluir este post permanentemente?');
+    if (!confirmed) return;
+
+    setGlobalPosts((previous) => previous.filter((item) => item.id !== postId));
+    if (editingPostId === postId) {
+      closeEditContentDialog();
+    }
+    toast.success('Post excluido.');
+  };
+
+  const handleDeleteStory = (storyId: string, closeViewer = false) => {
+    const story = globalStories.find((item) => item.id === storyId);
+    if (!story) return;
+
+    const isOwner = normalizeHandle(story.authorHandle || story.authorName) === normalizedProfileHandle;
+    if (!isOwner) {
+      toast.error('Voce so pode excluir suas proprias stories.');
+      return;
+    }
+
+    const confirmed = window.confirm('Excluir esta story permanentemente?');
+    if (!confirmed) return;
+
+    setGlobalStories((previous) => previous.filter((item) => item.id !== storyId));
+    if (editingStoryId === storyId) {
+      closeEditContentDialog();
+    }
+    if (closeViewer) {
+      closeActiveStoryDialog();
+    }
+    toast.success('Story excluida.');
+  };
+
   const markPostAsShared = (postId: string) => {
     setGlobalPosts((previous) =>
       previous.map((post) =>
@@ -2351,10 +2965,75 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     return true;
   };
 
+  const startChatWithFriend = (friendId: string) => {
+    if (!friendId) return;
+    setPendingChatFriendId(friendId);
+    setActiveChatFriendId(friendId);
+  };
+
+  const handleStartChat = (friendId?: string) => {
+    const targetFriendId =
+      friendId ||
+      pendingChatFriendId ||
+      (filteredChatFriends.length ? filteredChatFriends[0].id : '');
+
+    if (!targetFriendId) {
+      toast.error('Selecione um contato para iniciar o FitChat.');
+      return;
+    }
+
+    startChatWithFriend(targetFriendId);
+  };
+
+  const handleToggleKeepChatHistory = (checked: boolean) => {
+    setKeepChatHistory(checked);
+    if (checked) {
+      toast.success('Historico do FitChat ativado.');
+      return;
+    }
+    toast.info('Historico desativado. Novas mensagens nao serao salvas localmente.');
+  };
+
+  const handleClearActiveConversation = () => {
+    if (!activeChatFriendId) {
+      toast.error('Escolha um contato para apagar a conversa.');
+      return;
+    }
+
+    const friend = friendsById.get(activeChatFriendId);
+    const confirmed = window.confirm(
+      `Apagar o historico com ${friend?.name || 'este contato'} neste aparelho?`
+    );
+    if (!confirmed) return;
+
+    setSocialState((previous) => ({
+      ...previous,
+      chatMessages: previous.chatMessages.filter((message) => message.friendId !== activeChatFriendId),
+    }));
+
+    toast.success('Historico da conversa removido.');
+  };
+
+  const handleClearAllChatHistory = () => {
+    const confirmed = window.confirm('Apagar todo o historico do FitChat neste aparelho?');
+    if (!confirmed) return;
+
+    const incomingEventIds = globalChatEvents
+      .filter((event) => normalizeHandle(event.receiverHandle) === normalizedProfileHandle)
+      .map((event) => event.id);
+
+    setSocialState((previous) => ({ ...previous, chatMessages: [] }));
+    setSeenChatEventIds((previous) =>
+      sanitizeSeenChatEventIds([...previous, ...incomingEventIds])
+    );
+
+    toast.success('Historico do FitChat apagado.');
+  };
+
   const handleSendChatMessage = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!activeChatFriendId) {
-      toast.error('Selecione quem voce segue para conversar.');
+      toast.error('Selecione um contato para conversar.');
       return;
     }
     const text = chatInput.trim();
@@ -2457,7 +3136,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setShareMessage('');
     setSelectedShareFriendIds(feedShareFriendId ? [feedShareFriendId] : []);
     setIsShareDialogOpen(true);
-    setActiveStoryId('');
+    closeActiveStoryDialog();
   };
 
   const closeShareDialog = () => {
@@ -2583,7 +3262,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             </TabsTrigger>
             <TabsTrigger value="chat" className="py-2 text-xs md:text-sm">
               <MessageCircle className="mr-1 h-4 w-4" />
-              Chat
+              FitChat
             </TabsTrigger>
             <TabsTrigger value="feed" className="py-2 text-xs md:text-sm">
               <ImagePlus className="mr-1 h-4 w-4" />
@@ -2969,30 +3648,209 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         <TabsContent value="chat" className="space-y-4">
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle className="text-lg">Chat estilo WhatsApp</CardTitle>
-              <CardDescription>Converse e compartilhe posts direto com quem voce segue.</CardDescription>
+              <CardTitle className="text-lg">FitChat</CardTitle>
+              <CardDescription>Mensagens instantaneas e contatos em um chat focado no seu treino.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="chat-friend-select">Conversa com</Label>
-                <select
-                  id="chat-friend-select"
-                  className="flex h-12 w-full rounded-lg border border-border bg-secondary/50 px-3 text-sm"
-                  value={activeChatFriendId}
-                  onChange={(event) => setActiveChatFriendId(event.target.value)}
-                >
-                  {!socialState.friends.length && <option value="">Nenhum perfil seguido disponivel</option>}
-                  {socialState.friends.map((friend) => (
-                    <option key={friend.id} value={friend.id}>
-                      {friend.name}
-                    </option>
-                  ))}
-                </select>
+              <div className="rounded-xl border border-border/70 bg-card/40 p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="font-medium">Encontrar contatos pelo celular</p>
+                    <p className="text-xs text-muted-foreground">
+                      Importe contatos validos do aparelho e veja quem ja usa o SouFit.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleImportDeviceContacts}
+                    disabled={isImportingContacts || !contactPickerSupported}
+                  >
+                    {isImportingContacts ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Importando...
+                      </>
+                    ) : (
+                      <>
+                        <Smartphone className="h-4 w-4" />
+                        Buscar contatos
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {!contactPickerSupported && (
+                  <p className="text-xs text-muted-foreground">
+                    Seu navegador/dispositivo nao suporta leitura de contatos.
+                  </p>
+                )}
+                {importedContactsCount > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {importedContactsCount} contato(s) valido(s) analisado(s) nesta importacao.
+                  </p>
+                )}
+                {!!matchedPhoneContacts.length && (
+                  <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                    {matchedPhoneContacts.map((match) => {
+                      const normalizedHandle = match.profile.normalizedHandle;
+                      const followedFriend = friendsByHandle.get(normalizedHandle);
+                      const alreadyFollowing = Boolean(followedFriend);
+                      const hasOutgoingRequest = outgoingPendingHandles.has(normalizedHandle);
+                      const hasIncomingRequest = incomingPendingHandles.has(normalizedHandle);
+                      const isMyOwnProfile = normalizedHandle === normalizedProfileHandle;
+
+                      return (
+                        <div
+                          key={match.id}
+                          className="rounded-lg border border-border/60 bg-background/45 p-2.5"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold">{match.contactName}</p>
+                              <p className="text-xs text-muted-foreground">{match.contactPhone}</p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                No app: {match.profile.name} ({match.profile.handle})
+                              </p>
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                              {alreadyFollowing && followedFriend ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => startChatWithFriend(followedFriend.id)}
+                                >
+                                  Abrir FitChat
+                                </Button>
+                              ) : hasOutgoingRequest ? (
+                                <Badge variant="secondary">Pedido pendente</Badge>
+                              ) : hasIncomingRequest ? (
+                                <Badge variant="outline">Aceite o pedido</Badge>
+                              ) : isMyOwnProfile ? (
+                                <Badge variant="outline">Voce</Badge>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="energy"
+                                  onClick={() => handleFollowMatchedContact(match)}
+                                >
+                                  Seguir
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              {!socialState.friends.length && (
-                <p className="text-sm text-muted-foreground">Siga perfis para iniciar o chat.</p>
-              )}
+              <div className="rounded-xl border border-border/70 bg-card/35 p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium">Contatos do FitChat</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="energy"
+                    onClick={() => handleStartChat()}
+                    disabled={!socialState.friends.length}
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    Iniciar chat
+                  </Button>
+                </div>
+
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={chatFriendSearch}
+                    onChange={(event) => setChatFriendSearch(event.target.value)}
+                    className="pl-9"
+                    placeholder="Pesquisar contato por nome ou @usuario"
+                  />
+                </div>
+
+                <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border/60 bg-background/30 p-1.5">
+                  {!socialState.friends.length && (
+                    <p className="px-2 py-2 text-sm text-muted-foreground">
+                      Siga perfis para iniciar o FitChat.
+                    </p>
+                  )}
+                  {!!socialState.friends.length && !filteredChatFriends.length && (
+                    <p className="px-2 py-2 text-sm text-muted-foreground">
+                      Nenhum contato encontrado com essa busca.
+                    </p>
+                  )}
+                  {filteredChatFriends.map((friend) => {
+                    const isPending = friend.id === pendingChatFriendId;
+                    const isActive = friend.id === activeChatFriendId;
+                    return (
+                      <div
+                        key={friend.id}
+                        className={cn(
+                          'flex items-center justify-between gap-2 rounded-md border px-2 py-2 transition-colors',
+                          isPending
+                            ? 'border-primary/60 bg-primary/10'
+                            : 'border-transparent hover:border-primary/30 hover:bg-secondary/40'
+                        )}
+                      >
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 text-left"
+                          onClick={() => setPendingChatFriendId(friend.id)}
+                        >
+                          <p className="line-clamp-1 text-sm font-medium">{friend.name}</p>
+                          <p className="line-clamp-1 text-xs text-muted-foreground">{friend.handle}</p>
+                        </button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={isActive ? 'default' : 'outline'}
+                          onClick={() => handleStartChat(friend.id)}
+                        >
+                          {isActive ? 'Em chat' : 'Iniciar'}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="rounded-lg border border-border/60 bg-background/35 p-2.5 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="fit-chat-history" className="text-sm">
+                      Manter mensagens no historico
+                    </Label>
+                    <Switch
+                      id="fit-chat-history"
+                      checked={keepChatHistory}
+                      onCheckedChange={handleToggleKeepChatHistory}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handleClearActiveConversation}
+                      disabled={!activeChatFriendId}
+                    >
+                      Apagar conversa atual
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive hover:text-destructive"
+                      onClick={handleClearAllChatHistory}
+                      disabled={!socialState.chatMessages.length}
+                    >
+                      Apagar todo historico
+                    </Button>
+                  </div>
+                </div>
+              </div>
 
               {!!socialState.friends.length && activeChatFriend && (
                 <div className="overflow-hidden rounded-xl border border-border/70">
@@ -3117,27 +3975,34 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                 <span className="line-clamp-1 text-[11px]">Seu story</span>
               </button>
 
-              {activeStories.map((story) => (
+              {storyGroups.map((group) => (
                 <button
-                  key={story.id}
+                  key={group.authorHandle}
                   type="button"
-                  onClick={() => setActiveStoryId(story.id)}
+                  onClick={() => openStoryGroup(group.authorHandle)}
                   className="flex w-[74px] shrink-0 flex-col items-center gap-1 text-center"
                 >
                   <div className="social-story-ring">
-                    <img
-                      src={story.imageDataUrl}
-                      alt={`Story de ${story.authorName}`}
-                      className="h-16 w-16 rounded-full border-2 border-background object-cover"
-                    />
+                    <div className="relative">
+                      <img
+                        src={group.previewImageDataUrl}
+                        alt={`Story de ${group.authorName}`}
+                        className="h-16 w-16 rounded-full border-2 border-background object-cover"
+                      />
+                      {group.stories.length > 1 && (
+                        <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                          {group.stories.length}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <span className="line-clamp-1 text-[11px]">
-                    {story.authorName.split(' ')[0]}
+                    {group.authorName.split(' ')[0]}
                   </span>
                 </button>
               ))}
             </div>
-            {!activeStories.length && (
+            {!storyGroups.length && (
               <p className="mt-2 text-xs text-muted-foreground">Sem stories nas ultimas 24h.</p>
             )}
           </div>
@@ -3161,6 +4026,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               const likedByMe = post.likedByHandles.some(
                 (handle) => normalizeHandle(handle) === normalizedProfileHandle
               );
+              const postOwnedByMe =
+                normalizeHandle(post.authorHandle || post.authorName) === normalizedProfileHandle;
 
               return (
                 <article key={post.id} className="social-feed-post">
@@ -3178,9 +4045,35 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                         </p>
                       </div>
                     </div>
-                    <Badge variant="outline" className="hidden md:inline-flex">
-                      {post.sharedCount} compartilhamentos
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant="outline" className="hidden md:inline-flex">
+                        {post.sharedCount} compartilhamentos
+                      </Badge>
+                      {postOwnedByMe && (
+                        <>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 rounded-full"
+                            onClick={() => openEditPostDialog(post)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                            <span className="sr-only">Editar post</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 rounded-full text-destructive hover:text-destructive"
+                            onClick={() => handleDeletePost(post.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="sr-only">Excluir post</span>
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   <img
@@ -3308,7 +4201,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             <CardContent className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={handleEnableBrowserNotifications}>
                 <BellRing className="h-4 w-4" />
-                Ativar notificacoes do navegador
+                Ativar notificacoes do FitChat
               </Button>
               <Button type="button" variant="outline" onClick={handleMarkAllNotificationsAsRead}>
                 <CheckCircle2 className="h-4 w-4" />
@@ -3601,7 +4494,55 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(activeStory)} onOpenChange={(open) => !open && setActiveStoryId('')}>
+      <Dialog
+        open={isEditContentDialogOpen}
+        onOpenChange={(open) => (open ? setIsEditContentDialogOpen(true) : closeEditContentDialog())}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingPostId ? 'Editar post' : 'Editar story'}</DialogTitle>
+            <DialogDescription>
+              {editingPostId
+                ? 'Atualize a legenda do seu post.'
+                : 'Atualize a legenda da sua story (opcional).'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {!editingContentTarget && (
+            <p className="text-sm text-muted-foreground">Conteudo nao encontrado.</p>
+          )}
+          {editingContentTarget && (
+            <div className="space-y-3">
+              <img
+                src={editingContentTarget.imageDataUrl}
+                alt="Pre-visualizacao do conteudo"
+                className="h-56 w-full rounded-lg border border-border/70 object-cover"
+              />
+              <Textarea
+                value={editingContentCaption}
+                onChange={(event) => setEditingContentCaption(event.target.value)}
+                placeholder={editingPostId ? 'Legenda do post' : 'Legenda da story (opcional)'}
+              />
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" className="flex-1" onClick={closeEditContentDialog}>
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  variant="energy"
+                  className="flex-1"
+                  onClick={handleSaveEditedContent}
+                  disabled={Boolean(editingPostId) && !editingContentCaption.trim()}
+                >
+                  Salvar alteracoes
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(activeStory)} onOpenChange={(open) => !open && closeActiveStoryDialog()}>
         <DialogContent className="max-w-sm overflow-hidden p-0">
           {activeStory && (
             <div className="relative">
@@ -3610,16 +4551,64 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                 alt={`Story de ${activeStory.authorName}`}
                 className="h-[72vh] w-full object-cover"
               />
-              <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/80 to-transparent p-4 text-white">
-                <p className="font-semibold">{activeStory.authorName}</p>
-                <p className="text-xs">{formatDateTime(activeStory.createdAt)}</p>
+
+              {canMoveToPreviousStory && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="absolute left-2 top-1/2 h-9 w-9 -translate-y-1/2 rounded-full bg-black/35 text-white hover:bg-black/55"
+                  onClick={() => handleMoveStoryWithinGroup(-1)}
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                  <span className="sr-only">Story anterior</span>
+                </Button>
+              )}
+              {canMoveToNextStory && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="absolute right-2 top-1/2 h-9 w-9 -translate-y-1/2 rounded-full bg-black/35 text-white hover:bg-black/55"
+                  onClick={() => handleMoveStoryWithinGroup(1)}
+                >
+                  <ChevronRight className="h-5 w-5" />
+                  <span className="sr-only">Proxima story</span>
+                </Button>
+              )}
+
+              <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/80 to-transparent p-4 text-white space-y-2">
+                {activeStoryGroup && activeStoryGroup.stories.length > 1 && (
+                  <div className="flex gap-1">
+                    {activeStoryGroup.stories.map((story, index) => (
+                      <span
+                        key={story.id}
+                        className={cn(
+                          'h-1 flex-1 rounded-full',
+                          index <= activeStoryIndex ? 'bg-white' : 'bg-white/35'
+                        )}
+                      />
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{activeStory.authorName}</p>
+                    <p className="text-xs">{formatDateTime(activeStory.createdAt)}</p>
+                  </div>
+                  {activeStoryGroup && activeStoryGroup.stories.length > 1 && (
+                    <p className="text-[11px] text-slate-200">
+                      {activeStoryIndex + 1}/{activeStoryGroup.stories.length}
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-4 text-white space-y-3">
                 {!!activeStory.caption && (
                   <p className="text-sm">{activeStory.caption}</p>
                 )}
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button
                       type="button"
                       size="sm"
@@ -3646,6 +4635,30 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       <Share2 className="h-3.5 w-3.5" />
                       Compartilhar
                     </Button>
+                    {isActiveStoryOwnedByMe && (
+                      <>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          className="h-8 w-8 border-white/40 bg-black/30 text-white hover:bg-black/45"
+                          onClick={() => openEditStoryDialog(activeStory, true)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          <span className="sr-only">Editar story</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          className="h-8 w-8 border-white/40 bg-black/30 text-white hover:bg-black/45"
+                          onClick={() => handleDeleteStory(activeStory.id, true)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span className="sr-only">Excluir story</span>
+                        </Button>
+                      </>
+                    )}
                   </div>
                   <span className="text-xs text-slate-200">
                     {activeStory.sharedCount} compartilhamentos
