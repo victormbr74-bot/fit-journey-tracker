@@ -552,6 +552,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [sharePostId, setSharePostId] = useState('');
   const [shareStoryId, setShareStoryId] = useState('');
   const [shareSearch, setShareSearch] = useState('');
+  const [feedSearch, setFeedSearch] = useState('');
   const [shareMessage, setShareMessage] = useState('');
   const [selectedShareFriendIds, setSelectedShareFriendIds] = useState<string[]>([]);
   const [postCommentInputs, setPostCommentInputs] = useState<Record<string, string>>({});
@@ -1461,6 +1462,27 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       }
     );
   }, [socialState.friends, shareSearch]);
+
+  const filteredFeedPosts = useMemo(() => {
+    const query = feedSearch.trim().toLowerCase();
+    if (!query) return globalPosts;
+
+    const normalizedHandleQuery = sanitizeHandleInput(query);
+
+    return globalPosts.filter((post) => {
+      const authorName = (post.authorName || '').toLowerCase();
+      const authorHandle = toHandle(post.authorHandle || post.authorName || 'fit.user').toLowerCase();
+      const caption = (post.caption || '').toLowerCase();
+      const normalizedAuthorHandle = normalizeHandle(post.authorHandle || '');
+
+      return (
+        authorName.includes(query) ||
+        authorHandle.includes(query) ||
+        caption.includes(query) ||
+        (!!normalizedHandleQuery && normalizedAuthorHandle.includes(normalizedHandleQuery))
+      );
+    });
+  }, [feedSearch, globalPosts]);
 
   const activeStories = useMemo(() => sanitizeStories(globalStories), [globalStories]);
 
@@ -3061,8 +3083,16 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         </TabsContent>
 
         <TabsContent value="feed" className="social-feed-column space-y-4 md:space-y-5">
-          <div className="flex items-center justify-between px-1">
-            <p className="hidden text-sm text-muted-foreground md:block">Home</p>
+          <div className="flex items-center gap-2 px-1">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={feedSearch}
+                onChange={(event) => setFeedSearch(event.target.value)}
+                placeholder="Buscar no feed por nome, @usuario ou legenda"
+                className="h-10 rounded-full pl-9"
+              />
+            </div>
             <Button
               type="button"
               size="icon"
@@ -3118,8 +3148,16 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
             </div>
           )}
 
+          {!!globalPosts.length && !filteredFeedPosts.length && (
+            <div className="rounded-2xl border border-border/80 bg-card/65 p-4">
+              <p className="text-sm text-muted-foreground">
+                Nenhum post encontrado para essa busca.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-4">
-            {globalPosts.map((post) => {
+            {filteredFeedPosts.map((post) => {
               const likedByMe = post.likedByHandles.some(
                 (handle) => normalizeHandle(handle) === normalizedProfileHandle
               );
