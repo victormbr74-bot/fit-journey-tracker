@@ -18,7 +18,6 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import {
   Bell,
-  Bot,
   CheckCircle2,
   Dumbbell,
   Flame,
@@ -33,7 +32,7 @@ type AssistantRole = 'assistant' | 'user';
 type FocusId = 'peito' | 'costas' | 'pernas' | 'ombros' | 'bracos' | 'core' | 'cardio';
 type PendingAction = 'workout' | 'diet' | 'reminder' | null;
 type NotificationState = NotificationPermission | 'unsupported';
-const ASSISTANT_NAME = 'PERSONAL AMIGO';
+const ASSISTANT_NAME = 'Personal';
 const APP_NOTIFICATION_ICON = '/favicon.png';
 const APP_NOTIFICATION_BADGE = '/favicon.png';
 
@@ -1147,7 +1146,12 @@ const buildRecentHistory = (): string =>
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <CardTitle className="flex items-center gap-2">
-              <Bot className="w-5 h-5 text-primary" />
+              <img
+                src="/assistant-robot-lifting.gif"
+                alt={ASSISTANT_NAME}
+                className="h-4 w-4 rounded-full object-cover"
+                loading="lazy"
+              />
               Chat com {ASSISTANT_NAME}
             </CardTitle>
             <div className="flex flex-wrap items-center gap-2">

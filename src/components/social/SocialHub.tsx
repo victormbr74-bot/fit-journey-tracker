@@ -145,6 +145,12 @@ interface MatchedPhoneContact {
   profile: DiscoverableProfile;
 }
 
+interface ChatAttachmentDraft {
+  name: string;
+  type: string;
+  dataUrl: string;
+}
+
 interface StoryGroup {
   authorHandle: string;
   authorName: string;
@@ -185,6 +191,7 @@ const resolveGoalLabel = (goal: string | null | undefined) => {
 
 const NOTIFICATION_LIMIT = 120;
 const MAX_IMAGE_SIZE = 1080;
+const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 const GLOBAL_FEED_POST_LIMIT = 500;
 const GLOBAL_STORY_LIMIT = 500;
 const GLOBAL_FRIEND_REQUEST_LIMIT = 500;
@@ -199,6 +206,24 @@ const FIT_CHAT_ENTRY_PATH = '/chat';
 const FIT_CHAT_WEB_PUSH_PUBLIC_KEY = import.meta.env.VITE_FITCHAT_WEB_PUSH_PUBLIC_KEY as string | undefined;
 const APP_NOTIFICATION_ICON = '/favicon.png';
 const APP_NOTIFICATION_BADGE = '/favicon.png';
+const CHAT_QUICK_EMOJIS = [
+  '😀',
+  '😁',
+  '😂',
+  '😅',
+  '😉',
+  '😊',
+  '😍',
+  '🤩',
+  '🔥',
+  '💪',
+  '👏',
+  '🎯',
+  '🏃',
+  '🏋️',
+  '🥗',
+  '💧',
+];
 
 const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const sanitizeHandleInput = (value: string) => sanitizeHandleBody(value);
@@ -397,15 +422,29 @@ const sanitizeFriendRequests = (requests: SocialFriendRequest[]) =>
 
 const sanitizeChatEvents = (events: SocialGlobalChatEvent[]) =>
   events
-    .filter(
-      (event) =>
-        event?.id &&
-        event.senderProfileId &&
-        event.senderHandle &&
-        event.receiverHandle &&
-        event.text &&
-        event.createdAt
-    )
+    .map((event) => {
+      if (!event || typeof event !== 'object') return null;
+      if (!event.id || !event.senderProfileId || !event.senderHandle || !event.receiverHandle) return null;
+
+      const createdAt = event.createdAt && !Number.isNaN(new Date(event.createdAt).getTime())
+        ? event.createdAt
+        : new Date().toISOString();
+      const trimmedText = event.text?.toString().trim() || '';
+      const attachmentDataUrl = event.attachmentDataUrl?.toString() || '';
+      const attachmentName = event.attachmentName?.toString().trim() || '';
+
+      if (!trimmedText && !attachmentDataUrl && !attachmentName) return null;
+
+      return {
+        ...event,
+        text: trimmedText || 'Arquivo compartilhado',
+        createdAt,
+        attachmentName: attachmentName || undefined,
+        attachmentType: event.attachmentType?.toString().trim() || undefined,
+        attachmentDataUrl: attachmentDataUrl || undefined,
+      } as SocialGlobalChatEvent;
+    })
+    .filter((event): event is SocialGlobalChatEvent => Boolean(event))
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     .slice(-GLOBAL_CHAT_EVENT_LIMIT);
 
@@ -503,15 +542,22 @@ const sanitizeChatMessages = (messages: unknown): SocialChatMessage[] => {
       const createdAt = rawMessage.createdAt && !Number.isNaN(new Date(rawMessage.createdAt).getTime())
         ? rawMessage.createdAt
         : new Date().toISOString();
+      const attachmentDataUrl = rawMessage.attachmentDataUrl?.toString() || '';
+      const attachmentName = rawMessage.attachmentName?.toString().trim() || '';
+      const messageText = rawMessage.text?.toString().trim() || '';
+      if (!messageText && !attachmentDataUrl && !attachmentName) return null;
 
       return {
         id: rawMessage.id,
         friendId: rawMessage.friendId,
         sender: rawMessage.sender === 'friend' ? 'friend' : 'me',
-        text: rawMessage.text?.toString() || '',
+        text: messageText || 'Arquivo compartilhado',
         createdAt,
         postId: rawMessage.postId,
         storyId: rawMessage.storyId,
+        attachmentName: attachmentName || undefined,
+        attachmentType: rawMessage.attachmentType?.toString().trim() || undefined,
+        attachmentDataUrl: attachmentDataUrl || undefined,
         externalEventId: rawMessage.externalEventId,
       } as SocialChatMessage;
     })
@@ -634,7 +680,25 @@ const formatChatPreview = (message: SocialChatMessage | null) => {
   if (!message) return 'Toque para iniciar conversa';
   if (message.postId) return message.sender === 'me' ? 'Voce compartilhou um post' : 'Compartilhou um post';
   if (message.storyId) return message.sender === 'me' ? 'Voce compartilhou uma story' : 'Compartilhou uma story';
+  if (message.attachmentDataUrl) {
+    const isImage = (message.attachmentType || '').startsWith('image/');
+    if (message.sender === 'me') {
+      return isImage ? 'Voce enviou uma foto' : 'Voce enviou um arquivo';
+    }
+    return isImage ? 'Enviou uma foto' : 'Enviou um arquivo';
+  }
   return message.text.replace(/\s+/g, ' ').trim();
+};
+
+const getOutgoingMessageStatus = (
+  message: SocialChatMessage,
+  conversationMessages: SocialChatMessage[]
+): 'delivered' | 'read' => {
+  const sentAt = new Date(message.createdAt).getTime();
+  const hasReplyAfter = conversationMessages.some(
+    (item) => item.sender === 'friend' && new Date(item.createdAt).getTime() >= sentAt
+  );
+  return hasReplyAfter ? 'read' : 'delivered';
 };
 
 export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs = true }: SocialHubProps) {
@@ -703,6 +767,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [activeChatFriendId, setActiveChatFriendId] = useState('');
   const [feedShareFriendId, setFeedShareFriendId] = useState('');
   const [chatInput, setChatInput] = useState('');
+  const [pendingChatAttachment, setPendingChatAttachment] = useState<ChatAttachmentDraft | null>(null);
+  const [processingChatAttachment, setProcessingChatAttachment] = useState(false);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [chatEventsLoaded, setChatEventsLoaded] = useState(false);
   const [isRegisteringPush, setIsRegisteringPush] = useState(false);
   const [pushNotificationsReady, setPushNotificationsReady] = useState(false);
@@ -716,6 +783,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [sharePostId, setSharePostId] = useState('');
   const [shareStoryId, setShareStoryId] = useState('');
+  const [chatSharedPostPreviewId, setChatSharedPostPreviewId] = useState('');
+  const [chatSharedStoryPreviewId, setChatSharedStoryPreviewId] = useState('');
   const [shareSearch, setShareSearch] = useState('');
   const [feedSearch, setFeedSearch] = useState('');
   const [shareMessage, setShareMessage] = useState('');
@@ -740,6 +809,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   const composerGalleryInputRef = useRef<HTMLInputElement | null>(null);
   const composerCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const chatAttachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const chatCameraInputRef = useRef<HTMLInputElement | null>(null);
   const chatMessagesContainerRef = useRef<HTMLDivElement | null>(null);
   const outgoingRequestStatusRef = useRef<Map<string, SocialFriendRequest['status']>>(new Map());
   const initializedOutgoingRequestStatusRef = useRef(false);
@@ -2105,6 +2176,17 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     [activeStories, shareStoryId]
   );
 
+  const chatSharedPreviewPost = useMemo(
+    () => (chatSharedPostPreviewId ? postsById.get(chatSharedPostPreviewId) ?? null : null),
+    [chatSharedPostPreviewId, postsById]
+  );
+
+  const chatSharedPreviewStory = useMemo(
+    () => (chatSharedStoryPreviewId ? storiesById.get(chatSharedStoryPreviewId) ?? null : null),
+    [chatSharedStoryPreviewId, storiesById]
+  );
+  const chatSharedPreviewItem = chatSharedPreviewPost ?? chatSharedPreviewStory;
+
   const editingPost = useMemo(
     () => globalPosts.find((post) => post.id === editingPostId) ?? null,
     [editingPostId, globalPosts]
@@ -2356,6 +2438,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         createdAt: event.createdAt,
         postId: event.postId,
         storyId: event.storyId,
+        attachmentName: event.attachmentName,
+        attachmentType: event.attachmentType,
+        attachmentDataUrl: event.attachmentDataUrl,
         externalEventId: event.id,
       });
     });
@@ -3297,20 +3382,30 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     friendId: string,
     text: string,
     postId?: string,
-    storyId?: string
+    storyId?: string,
+    attachment?: ChatAttachmentDraft
   ) => {
     const friend = friendsById.get(friendId);
     if (!friend) return false;
+
+    const fallbackText = attachment
+      ? ((attachment.type || '').startsWith('image/') ? 'Imagem enviada' : 'Arquivo enviado')
+      : '';
+    const messageText = text.trim() || fallbackText;
+    if (!messageText) return false;
 
     const createdAt = new Date().toISOString();
     appendChatMessage({
       id: createId(),
       friendId,
       sender: 'me',
-      text,
+      text: messageText,
       createdAt,
       postId,
       storyId,
+      attachmentName: attachment?.name,
+      attachmentType: attachment?.type,
+      attachmentDataUrl: attachment?.dataUrl,
     });
 
     appendGlobalChatEvent({
@@ -3319,13 +3414,16 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       senderName: profile.name,
       senderHandle: profileHandle,
       receiverHandle: friend.handle,
-      text,
+      text: messageText,
       createdAt,
       postId,
       storyId,
+      attachmentName: attachment?.name,
+      attachmentType: attachment?.type,
+      attachmentDataUrl: attachment?.dataUrl,
     });
 
-    void notifyFitChatPush(friend.handle, text, postId, storyId);
+    void notifyFitChatPush(friend.handle, messageText, postId, storyId);
 
     return true;
   };
@@ -3398,6 +3496,46 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     toast.success('Historico do FitChat apagado.');
   };
 
+  const handleSelectQuickEmoji = (emoji: string) => {
+    setChatInput((previous) => `${previous}${emoji}`);
+  };
+
+  const handleChatAttachmentSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
+      toast.error('Arquivo muito grande. Limite de 5 MB por envio.');
+      return;
+    }
+
+    setProcessingChatAttachment(true);
+    try {
+      const isImage = file.type.startsWith('image/');
+      const dataUrl = isImage ? await convertImageToDataUrl(file) : '';
+
+      setPendingChatAttachment({
+        name: file.name || 'arquivo',
+        type: file.type || 'application/octet-stream',
+        dataUrl,
+      });
+      if (!isImage) {
+        toast.success('Arquivo anexado. O chat exibira nome e tipo do arquivo.');
+      }
+      setIsEmojiPickerOpen(false);
+    } catch (error) {
+      console.error('Erro ao preparar anexo do chat:', error);
+      toast.error('Nao foi possivel anexar esse arquivo.');
+    } finally {
+      setProcessingChatAttachment(false);
+    }
+  };
+
+  const handleRemovePendingChatAttachment = () => {
+    setPendingChatAttachment(null);
+  };
+
   const handleSendChatMessage = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!activeChatFriendId) {
@@ -3405,14 +3543,22 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       return;
     }
     const text = chatInput.trim();
-    if (!text) return;
+    if (!text && !pendingChatAttachment) return;
 
-    const wasSent = sendMessageToFollowedProfile(activeChatFriendId, text);
+    const wasSent = sendMessageToFollowedProfile(
+      activeChatFriendId,
+      text,
+      undefined,
+      undefined,
+      pendingChatAttachment || undefined
+    );
     if (!wasSent) {
       toast.error('Nao foi possivel enviar para esse perfil.');
       return;
     }
     setChatInput('');
+    setPendingChatAttachment(null);
+    setIsEmojiPickerOpen(false);
   };
 
   const handleSharePostWithFriend = (
@@ -3516,6 +3662,53 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     setSelectedShareFriendIds([]);
   };
 
+  const closeChatSharedPreview = () => {
+    setChatSharedPostPreviewId('');
+    setChatSharedStoryPreviewId('');
+  };
+
+  const openChatSharedPostPreview = (postId: string) => {
+    if (!postId) return;
+    const exists = postsById.has(postId);
+    if (!exists) {
+      toast.error('Esse post compartilhado nao esta mais disponivel.');
+      return;
+    }
+    setChatSharedStoryPreviewId('');
+    setChatSharedPostPreviewId(postId);
+  };
+
+  const openChatSharedStoryPreview = (storyId: string) => {
+    if (!storyId) return;
+    const exists = storiesById.has(storyId);
+    if (!exists) {
+      toast.error('Essa story compartilhada nao esta mais disponivel.');
+      return;
+    }
+    setChatSharedPostPreviewId('');
+    setChatSharedStoryPreviewId(storyId);
+  };
+
+  const handleOpenSharedOrigin = () => {
+    if (chatSharedPreviewPost) {
+      setActiveSection('feed');
+      closeChatSharedPreview();
+      return;
+    }
+
+    if (!chatSharedPreviewStory) return;
+    setActiveSection('feed');
+    const authorHandle = normalizeHandle(
+      chatSharedPreviewStory.authorHandle || chatSharedPreviewStory.authorName || ''
+    );
+    const group = storyGroups.find((item) => item.authorHandle === authorHandle);
+    if (group) {
+      const storyIndex = group.stories.findIndex((story) => story.id === chatSharedPreviewStory.id);
+      openStoryGroup(group.authorHandle, storyIndex >= 0 ? storyIndex : 0);
+    }
+    closeChatSharedPreview();
+  };
+
   const toggleShareFriendSelection = (friendId: string) => {
     setSelectedShareFriendIds((previous) =>
       previous.includes(friendId)
@@ -3578,6 +3771,22 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     }));
   };
 
+  const handleClearNotifications = () => {
+    if (!socialState.notifications.length) {
+      toast.info('Nao ha notificacoes para limpar.');
+      return;
+    }
+
+    const confirmed = window.confirm('Limpar todas as notificacoes locais?');
+    if (!confirmed) return;
+
+    setSocialState((prev) => ({
+      ...prev,
+      notifications: [],
+    }));
+    toast.success('Notificacoes limpas.');
+  };
+
   const isFeedSection = activeSection === 'feed';
 
   return (
@@ -3607,6 +3816,20 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         capture="environment"
         className="hidden"
         onChange={handleComposerImageSelected}
+      />
+      <input
+        ref={chatAttachmentInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleChatAttachmentSelected}
+      />
+      <input
+        ref={chatCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleChatAttachmentSelected}
       />
 
       <Tabs
@@ -4298,6 +4521,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                             const sharedPost = message.postId ? postsById.get(message.postId) : null;
                             const sharedStory = message.storyId ? storiesById.get(message.storyId) : null;
                             const isMine = message.sender === 'me';
+                            const receiptStatus = isMine
+                              ? getOutgoingMessageStatus(message, activeChatMessages)
+                              : null;
+                            const isImageAttachment = (message.attachmentType || '').startsWith('image/');
                             return (
                               <div
                                 key={message.id}
@@ -4312,12 +4539,42 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                   )}
                                 >
                                   <p className="whitespace-pre-wrap break-words text-sm">{message.text}</p>
+                                  {!!(message.attachmentName || message.attachmentDataUrl) && (
+                                    <div className="mt-2 rounded-md border border-border/70 bg-background/65 p-2">
+                                      {isImageAttachment && message.attachmentDataUrl ? (
+                                        <img
+                                          src={message.attachmentDataUrl}
+                                          alt={message.attachmentName || 'Imagem anexada'}
+                                          className="max-h-48 w-full rounded-md object-contain bg-secondary/40"
+                                        />
+                                      ) : message.attachmentDataUrl ? (
+                                        <a
+                                          href={message.attachmentDataUrl}
+                                          download={message.attachmentName || 'arquivo'}
+                                          className="inline-flex items-center gap-2 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                                        >
+                                          <Paperclip className="h-3.5 w-3.5" />
+                                          {message.attachmentName || 'Baixar arquivo'}
+                                        </a>
+                                      ) : (
+                                        <p className="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                                          <Paperclip className="h-3.5 w-3.5" />
+                                          {message.attachmentName || 'Arquivo anexado'}
+                                        </p>
+                                      )}
+                                      {!!message.attachmentName && isImageAttachment && (
+                                        <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+                                          {message.attachmentName}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
                                   {sharedPost && (
                                     <div className="mt-2 rounded-md border border-border/70 bg-background/65 p-2">
                                       <img
                                         src={sharedPost.imageDataUrl}
                                         alt={`Post de ${sharedPost.authorName}`}
-                                        className="h-24 w-full rounded-md object-cover"
+                                        className="h-24 w-full rounded-md object-contain bg-secondary/40"
                                       />
                                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{sharedPost.caption}</p>
                                     </div>
@@ -4327,16 +4584,42 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                       <img
                                         src={sharedStory.imageDataUrl}
                                         alt={`Story de ${sharedStory.authorName}`}
-                                        className="h-24 w-full rounded-md object-cover"
+                                        className="h-24 w-full rounded-md object-contain bg-secondary/40"
                                       />
                                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                                         Story: {sharedStory.caption || 'Sem legenda'}
                                       </p>
                                     </div>
                                   )}
+                                  {!!message.postId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openChatSharedPostPreview(message.postId)}
+                                      className="mt-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                                    >
+                                      Abrir post compartilhado
+                                    </button>
+                                  )}
+                                  {!message.postId && !!message.storyId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openChatSharedStoryPreview(message.storyId)}
+                                      className="mt-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                                    >
+                                      Abrir story compartilhada
+                                    </button>
+                                  )}
                                   <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
                                     <span>{formatTime(message.createdAt)}</span>
-                                    {isMine && <CheckCheck className="h-3.5 w-3.5 text-primary" />}
+                                    {isMine && (
+                                      <CheckCheck
+                                        className={cn(
+                                          'h-3.5 w-3.5',
+                                          receiptStatus === 'read' ? 'text-primary' : 'text-muted-foreground'
+                                        )}
+                                        title={receiptStatus === 'read' ? 'Mensagem lida' : 'Mensagem recebida'}
+                                      />
+                                    )}
                                   </div>
                                 </div>
                               </div>
@@ -4345,11 +4628,52 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                         </div>
                       </div>
 
-                      <div className="border-t border-border/70 bg-card/95 px-2 py-2 md:px-3">
+                      <div className="relative border-t border-border/70 bg-card/95 px-2 py-2 md:px-3">
+                        {isEmojiPickerOpen && (
+                          <div className="absolute bottom-[3.45rem] left-3 z-20 rounded-xl border border-border/80 bg-card p-2 shadow-lg">
+                            <div className="grid grid-cols-8 gap-1">
+                              {CHAT_QUICK_EMOJIS.map((emoji) => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => handleSelectQuickEmoji(emoji)}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-base transition hover:bg-secondary/70"
+                                  title={`Inserir ${emoji}`}
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {(processingChatAttachment || pendingChatAttachment) && (
+                          <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-border/70 bg-background/80 px-3 py-1.5 text-xs">
+                            <span className="line-clamp-1">
+                              {processingChatAttachment
+                                ? 'Preparando anexo...'
+                                : pendingChatAttachment
+                                  ? `Anexo pronto: ${pendingChatAttachment.name}`
+                                  : ''}
+                            </span>
+                            {!!pendingChatAttachment && !processingChatAttachment && (
+                              <button
+                                type="button"
+                                onClick={handleRemovePendingChatAttachment}
+                                className="rounded-full p-1 text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground"
+                                title="Remover anexo"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+
                         <form className="flex items-center gap-2" onSubmit={handleSendChatMessage}>
                           <div className="flex h-11 flex-1 items-center rounded-full border border-border/80 bg-background/80 px-2 shadow-sm">
                             <button
                               type="button"
+                              onClick={() => setIsEmojiPickerOpen((previous) => !previous)}
                               className="rounded-full p-2 text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground"
                               title="Emoji"
                             >
@@ -4363,6 +4687,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                             />
                             <button
                               type="button"
+                              onClick={() => chatAttachmentInputRef.current?.click()}
                               className="rounded-full p-2 text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground"
                               title="Anexar"
                             >
@@ -4370,6 +4695,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                             </button>
                             <button
                               type="button"
+                              onClick={() => chatCameraInputRef.current?.click()}
                               className="rounded-full p-2 text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground"
                               title="Camera"
                             >
@@ -4377,7 +4703,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                             </button>
                           </div>
                           <Button type="submit" className="h-11 w-11 rounded-full p-0">
-                            {chatInput.trim() ? (
+                            {chatInput.trim() || pendingChatAttachment ? (
                               <Send className="h-4 w-4" />
                             ) : (
                               <Mic className="h-4.5 w-4.5" />
@@ -4533,11 +4859,13 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                     </div>
                   </div>
 
-                  <img
-                    src={post.imageDataUrl}
-                    alt={`Post de ${post.authorName}`}
-                    className="aspect-square w-full object-cover"
-                  />
+                  <div className="w-full bg-secondary/45">
+                    <img
+                      src={post.imageDataUrl}
+                      alt={`Post de ${post.authorName}`}
+                      className="max-h-[72vh] w-full object-contain"
+                    />
+                  </div>
 
                   <div className="space-y-3 px-4 py-3">
                     <div className="flex items-center justify-between gap-2">
@@ -4678,6 +5006,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                 <CheckCircle2 className="h-4 w-4" />
                 Marcar todas como lidas
               </Button>
+              <Button type="button" variant="outline" onClick={handleClearNotifications}>
+                <Trash2 className="h-4 w-4" />
+                Limpar notificacoes
+              </Button>
               <p className="text-xs text-muted-foreground">
                 {pushNotificationsReady
                   ? 'Push ativo neste dispositivo.'
@@ -4740,6 +5072,44 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog
+        open={Boolean(chatSharedPreviewItem)}
+        onOpenChange={(open) => !open && closeChatSharedPreview()}
+      >
+        <DialogContent className="max-w-md overflow-hidden p-0">
+          {chatSharedPreviewItem && (
+            <>
+              <div className="w-full bg-secondary/45">
+                <img
+                  src={chatSharedPreviewItem.imageDataUrl}
+                  alt={`${chatSharedPreviewPost ? 'Post' : 'Story'} de ${chatSharedPreviewItem.authorName}`}
+                  className="max-h-[72vh] w-full object-contain"
+                />
+              </div>
+              <div className="space-y-3 p-4">
+                <DialogHeader className="space-y-1 text-left">
+                  <DialogTitle>{chatSharedPreviewPost ? 'Post compartilhado' : 'Story compartilhada'}</DialogTitle>
+                  <DialogDescription>
+                    {chatSharedPreviewItem.authorName} • {formatDateTime(chatSharedPreviewItem.createdAt)}
+                  </DialogDescription>
+                </DialogHeader>
+                <p className="text-sm">
+                  {chatSharedPreviewItem.caption || (chatSharedPreviewPost ? 'Post sem legenda.' : 'Story sem legenda.')}
+                </p>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" className="flex-1" onClick={closeChatSharedPreview}>
+                    Fechar
+                  </Button>
+                  <Button type="button" variant="energy" className="flex-1" onClick={handleOpenSharedOrigin}>
+                    {chatSharedPreviewPost ? 'Ir para Feed' : 'Abrir Story'}
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isShareDialogOpen} onOpenChange={(open) => (open ? setIsShareDialogOpen(true) : closeShareDialog())}>
         <DialogContent className="max-w-md">
@@ -4940,7 +5310,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               <img
                 src={composerImageDataUrl}
                 alt="Pre-visualizacao"
-                className="h-64 w-full rounded-lg border border-border/70 object-cover"
+                className="h-64 w-full rounded-lg border border-border/70 bg-background/70 object-contain"
               />
             )}
 
@@ -4992,7 +5362,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               <img
                 src={editingContentTarget.imageDataUrl}
                 alt="Pre-visualizacao do conteudo"
-                className="h-56 w-full rounded-lg border border-border/70 object-cover"
+                className="h-56 w-full rounded-lg border border-border/70 bg-background/70 object-contain"
               />
               <Textarea
                 value={editingContentCaption}
@@ -5025,7 +5395,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
               <img
                 src={activeStory.imageDataUrl}
                 alt={`Story de ${activeStory.authorName}`}
-                className="h-[72vh] w-full object-cover"
+                className="h-[72vh] w-full bg-black/55 object-contain"
               />
 
               {canMoveToPreviousStory && (

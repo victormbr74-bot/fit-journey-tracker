@@ -9,7 +9,6 @@ import {
   MapPin,
   Menu,
   MessageCircle,
-  Search,
   SquarePlay,
   Trophy,
   User,
@@ -27,7 +26,6 @@ import { disableSocialGlobalState, isSocialGlobalStateAvailable } from '@/lib/so
 
 const primaryNavItems = [
   { path: '/dashboard', label: 'Inicio', icon: Home },
-  { path: '/search', label: 'Pesquisar', icon: Search },
   { path: '/friends', label: 'Rede', icon: SquarePlay },
   { path: '/chat', label: 'Mensagens', icon: MessageCircle },
   { path: '/notifications', label: 'Atividade', icon: Heart },
@@ -38,7 +36,7 @@ const secondaryNavItems = [
   { path: '/diet', label: 'Dieta', icon: Utensils },
   { path: '/running', label: 'Corrida', icon: MapPin },
   { path: '/clans', label: 'CLA', icon: Trophy },
-  { path: '/assistant', label: 'Personal amigo', icon: Bot },
+  { path: '/assistant', label: 'Personal', icon: Bot },
 ];
 
 const allNavItems = [
@@ -257,16 +255,6 @@ export function Sidebar() {
           aria-label="Abrir inicio"
         >
           SouFit
-        </button>
-
-        <button
-          type="button"
-          onClick={() => navigateTo('/search')}
-          className="social-mobile-search"
-          aria-label="Abrir pesquisa"
-        >
-          <Search className="h-4 w-4 text-muted-foreground" />
-          <span>Pesquisar</span>
         </button>
 
         <div className="flex items-center gap-1">

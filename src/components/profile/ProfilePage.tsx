@@ -664,7 +664,7 @@ export function ProfilePage() {
                     key={post.id}
                     src={post.imageDataUrl}
                     alt={`Foto de ${profile.name}`}
-                    className="aspect-square w-full rounded-md border border-border/70 object-cover"
+                    className="aspect-square w-full rounded-md border border-border/70 bg-background/70 object-contain"
                   />
                 ))}
               </div>
@@ -803,7 +803,7 @@ export function ProfilePage() {
               <img
                 src={activeStory.imageDataUrl}
                 alt={`Story de ${activeStory.authorName}`}
-                className="h-[72vh] w-full object-cover"
+                className="h-[72vh] w-full bg-black/55 object-contain"
               />
               <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/80 to-transparent p-4 text-white">
                 <p className="font-semibold">{activeStory.authorName}</p>

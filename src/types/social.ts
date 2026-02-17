@@ -108,6 +108,9 @@ export interface SocialChatMessage {
   createdAt: string;
   postId?: string;
   storyId?: string;
+  attachmentName?: string;
+  attachmentType?: string;
+  attachmentDataUrl?: string;
   externalEventId?: string;
 }
 
@@ -121,6 +124,9 @@ export interface SocialGlobalChatEvent {
   createdAt: string;
   postId?: string;
   storyId?: string;
+  attachmentName?: string;
+  attachmentType?: string;
+  attachmentDataUrl?: string;
 }
 
 export interface SocialState {

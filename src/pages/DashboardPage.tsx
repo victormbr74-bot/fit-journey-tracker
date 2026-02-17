@@ -1,5 +1,5 @@
 import { AppLayout } from '@/components/layout/AppLayout';
-import { SocialHub } from '@/components/social/SocialHub';
+import { Dashboard } from '@/components/dashboard/Dashboard';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -31,20 +31,21 @@ const DashboardPage = () => {
 
   return (
     <AppLayout>
-      <SocialHub profile={profile} defaultSection="feed" showSectionTabs={false} />
+      <Dashboard />
       <Button
         type="button"
         variant="glass"
-        className="fixed bottom-20 right-4 z-[70] h-12 rounded-full border-border/70 bg-card/90 px-5 text-foreground shadow-xl md:bottom-8 md:right-8"
+        className="fixed bottom-36 right-4 z-[76] h-10 w-10 rounded-full border-border/70 bg-card/90 p-0 text-foreground shadow-xl md:bottom-24 md:right-8"
         onClick={() => navigate('/assistant')}
+        title="Personal"
+        aria-label="Personal"
       >
         <img
           src="/assistant-robot-lifting.gif"
-          alt="Robo levantando peso"
-          className="h-6 w-6 rounded-full object-cover"
+          alt="Personal"
+          className="h-7 w-7 rounded-full object-cover"
           loading="lazy"
         />
-        PERSONAL AMIGO
       </Button>
     </AppLayout>
   );

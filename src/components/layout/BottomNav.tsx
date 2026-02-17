@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Compass, Heart, Home, Plus, SquarePlay, User } from 'lucide-react';
+import { Heart, Home, Plus, SquarePlay, User } from 'lucide-react';
 
 import { useProfile } from '@/hooks/useProfile';
 import { SOCIAL_HUB_STORAGE_PREFIX } from '@/lib/storageKeys';
@@ -10,7 +10,6 @@ import { cn } from '@/lib/utils';
 
 const navItems = [
   { path: '/dashboard', label: 'Inicio', icon: Home },
-  { path: '/search', label: 'Explorar', icon: Compass },
   { path: '/friends', label: 'Rede', icon: SquarePlay },
   { path: '/clans', label: 'Criar', icon: Plus },
   { path: '/notifications', label: 'Atividade', icon: Heart },
