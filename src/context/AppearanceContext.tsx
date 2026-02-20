@@ -18,7 +18,7 @@ type AccentOption = {
 };
 
 const ACCENT_STORAGE_KEY = 'fit-journey.appearance.accent';
-const DEFAULT_ACCENT_THEME: AccentTheme = 'pink';
+const DEFAULT_ACCENT_THEME: AccentTheme = 'green';
 
 const ACCENT_OPTIONS: AccentOption[] = [
   { value: 'blue', label: 'Azul', preview: 'linear-gradient(135deg, #1d4ed8, #38bdf8)' },
@@ -93,4 +93,3 @@ export function useAppearance() {
   }
   return context;
 }
-

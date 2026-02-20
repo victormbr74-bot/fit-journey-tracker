@@ -37,6 +37,7 @@ import {
 import { toast } from 'sonner';
 
 import {
+  SOCIAL_CHAT_READ_STATE_STORAGE_PREFIX,
   SOCIAL_CHAT_SETTINGS_STORAGE_PREFIX,
   SOCIAL_GLOBAL_CHAT_EVENTS_STORAGE_KEY,
   SOCIAL_GLOBAL_FEED_STORAGE_KEY,
@@ -933,6 +934,19 @@ const sanitizeChatMessages = (messages: unknown): SocialChatMessage[] => {
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 };
 
+const sanitizeChatReadState = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== 'object') return {};
+
+  const nextState: Record<string, string> = {};
+  Object.entries(value).forEach(([friendId, readAt]) => {
+    if (!friendId.trim() || typeof readAt !== 'string') return;
+    const parsedReadAt = new Date(readAt);
+    if (Number.isNaN(parsedReadAt.getTime())) return;
+    nextState[friendId] = parsedReadAt.toISOString();
+  });
+  return nextState;
+};
+
 const isGlobalChatAttachmentMediaType = (attachmentType: string) =>
   attachmentType.startsWith('image/') || attachmentType.startsWith('audio/');
 
@@ -1359,6 +1373,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     () => `${SOCIAL_CHAT_SETTINGS_STORAGE_PREFIX}${profile.id}`,
     [profile.id]
   );
+  const chatReadStateStorageKey = useMemo(
+    () => `${SOCIAL_CHAT_READ_STATE_STORAGE_PREFIX}${profile.id}`,
+    [profile.id]
+  );
   const profileHandle = useMemo(
     () => profile.handle || toHandle(profile.name || profile.email || 'fit.user'),
     [profile.email, profile.handle, profile.name]
@@ -1379,6 +1397,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   const [seenIncomingRequestIds, setSeenIncomingRequestIds] = useState<string[]>([]);
   const [globalChatEvents, setGlobalChatEvents] = useState<SocialGlobalChatEvent[]>([]);
   const [seenChatEventIds, setSeenChatEventIds] = useState<string[]>([]);
+  const [chatLastReadAtByFriend, setChatLastReadAtByFriend] = useState<Record<string, string>>({});
+  const [chatReadStateLoaded, setChatReadStateLoaded] = useState(false);
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SocialSection>(defaultSection);
   const [remoteSnapshotLoaded, setRemoteSnapshotLoaded] = useState(false);
@@ -1558,6 +1578,25 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
   useEffect(() => {
     profilePointsRef.current = profile.points || 0;
   }, [profile.points]);
+
+  const markChatAsRead = useCallback((friendId: string, readAt?: string) => {
+    if (!friendId) return;
+    const parsedReadAt = readAt ? new Date(readAt) : new Date();
+    const normalizedReadAt = Number.isNaN(parsedReadAt.getTime())
+      ? new Date().toISOString()
+      : parsedReadAt.toISOString();
+    const nextReadTimestamp = new Date(normalizedReadAt).getTime();
+
+    setChatLastReadAtByFriend((previous) => {
+      const previousReadAt = previous[friendId];
+      const previousReadTimestamp = previousReadAt ? new Date(previousReadAt).getTime() : 0;
+      if (nextReadTimestamp <= previousReadTimestamp) return previous;
+      return {
+        ...previous,
+        [friendId]: normalizedReadAt,
+      };
+    });
+  }, []);
 
   const applyProfilePointsDelta = useCallback(async (delta: number, reason: string) => {
     if (!delta) return;
@@ -1741,6 +1780,31 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       JSON.stringify({ keepHistory: keepChatHistory })
     );
   }, [chatSettingsStorageKey, chatHistoryPreferenceLoaded, keepChatHistory]);
+
+  useEffect(() => {
+    setChatReadStateLoaded(false);
+    try {
+      const stored = window.localStorage.getItem(chatReadStateStorageKey);
+      if (!stored) {
+        setChatLastReadAtByFriend({});
+        setChatReadStateLoaded(true);
+        return;
+      }
+
+      const parsed = JSON.parse(stored) as unknown;
+      setChatLastReadAtByFriend(sanitizeChatReadState(parsed));
+    } catch (error) {
+      console.error('Erro ao carregar estado de leitura do FitChat:', error);
+      setChatLastReadAtByFriend({});
+    } finally {
+      setChatReadStateLoaded(true);
+    }
+  }, [chatReadStateStorageKey]);
+
+  useEffect(() => {
+    if (!chatReadStateLoaded) return;
+    window.localStorage.setItem(chatReadStateStorageKey, JSON.stringify(chatLastReadAtByFriend));
+  }, [chatLastReadAtByFriend, chatReadStateLoaded, chatReadStateStorageKey]);
 
   useEffect(() => {
     if (remoteGlobalSyncEnabled) {
@@ -3430,9 +3494,16 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         .map((friend) => {
           const friendMessages = chatMessagesByFriend.get(friend.id) || [];
           const lastMessage = friendMessages.length ? friendMessages[friendMessages.length - 1] : null;
-          const unreadCount = friend.id === activeChatFriendId
-            ? 0
-            : friendMessages.filter((message) => message.sender === 'friend').length;
+          const lastReadAt = chatLastReadAtByFriend[friend.id];
+          const lastReadTimestamp = lastReadAt ? new Date(lastReadAt).getTime() : 0;
+          const unreadCount =
+            friend.id === activeChatFriendId
+              ? 0
+              : friendMessages.filter((message) => {
+                  if (message.sender !== 'friend') return false;
+                  const messageTimestamp = new Date(message.createdAt).getTime();
+                  return messageTimestamp > lastReadTimestamp;
+                }).length;
 
           return {
             friend,
@@ -3442,13 +3513,23 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           };
         })
         .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()),
-    [activeChatFriendId, chatMessagesByFriend, filteredChatFriends]
+    [activeChatFriendId, chatLastReadAtByFriend, chatMessagesByFriend, filteredChatFriends]
   );
 
   const activeChatDayLabel = useMemo(() => {
     if (!activeChatMessages.length) return '';
     return formatChatDayLabel(activeChatMessages[0].createdAt);
   }, [activeChatMessages]);
+
+  useEffect(() => {
+    if (activeSection !== 'chat') return;
+    if (!activeChatFriendId) return;
+
+    const latestIncomingMessage = [...activeChatMessages]
+      .reverse()
+      .find((message) => message.sender === 'friend');
+    markChatAsRead(activeChatFriendId, latestIncomingMessage?.createdAt);
+  }, [activeChatFriendId, activeChatMessages, activeSection, markChatAsRead]);
 
   useEffect(() => {
     if (!socialState.friends.length) {
@@ -3948,6 +4029,12 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       }),
       chatMessages: previous.chatMessages.filter((message) => message.friendId !== friendId),
     }));
+    setChatLastReadAtByFriend((previous) => {
+      if (!(friendId in previous)) return previous;
+      const nextState = { ...previous };
+      delete nextState[friendId];
+      return nextState;
+    });
 
     setClanMemberIds((previous) => previous.filter((memberId) => memberId !== friendId));
     setClanAdminMemberId((previous) => (previous === friendId ? 'self' : previous));
@@ -5153,6 +5240,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   const startChatWithFriend = (friendId: string) => {
     if (!friendId) return;
+    markChatAsRead(friendId);
     setPendingChatFriendId(friendId);
     setActiveChatFriendId(friendId);
     if (isMobile) {
@@ -5183,13 +5271,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     toast.info('Historico desativado. Novas mensagens nao serao salvas localmente.');
   };
 
-  const handleClearActiveConversation = () => {
-    if (!activeChatFriendId) {
-      toast.error('Escolha um contato para apagar a conversa.');
-      return;
-    }
+  const handleDeleteConversationByFriend = (friendId: string) => {
+    if (!friendId) return;
 
-    const friend = friendsById.get(activeChatFriendId);
+    const friend = friendsById.get(friendId);
     const confirmed = window.confirm(
       `Apagar o historico com ${friend?.name || 'este contato'} neste aparelho?`
     );
@@ -5197,10 +5282,30 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     setSocialState((previous) => ({
       ...previous,
-      chatMessages: previous.chatMessages.filter((message) => message.friendId !== activeChatFriendId),
+      chatMessages: previous.chatMessages.filter((message) => message.friendId !== friendId),
     }));
 
-    toast.success('Historico da conversa removido.');
+    setChatLastReadAtByFriend((previous) => {
+      if (!(friendId in previous)) return previous;
+      const nextState = { ...previous };
+      delete nextState[friendId];
+      return nextState;
+    });
+
+    if (friendId === activeChatFriendId) {
+      setPendingChatMessageId('');
+      setHighlightedChatMessageId('');
+    }
+
+    toast.success('Conversa apagada.');
+  };
+
+  const handleClearActiveConversation = () => {
+    if (!activeChatFriendId) {
+      toast.error('Escolha um contato para apagar a conversa.');
+      return;
+    }
+    handleDeleteConversationByFriend(activeChatFriendId);
   };
 
   const handleDeleteChatMessage = (messageId: string) => {
@@ -5234,6 +5339,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       .map((event) => event.id);
 
     setSocialState((previous) => ({ ...previous, chatMessages: [] }));
+    setChatLastReadAtByFriend({});
     setSeenChatEventIds((previous) =>
       sanitizeSeenChatEventIds([...previous, ...incomingEventIds])
     );
@@ -6669,41 +6775,56 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                       const isActive = friend.id === activeChatFriendId;
                       const preview = formatChatPreview(lastMessage);
                       const lastTime = lastMessage ? formatChatListTime(lastMessage.createdAt) : '';
+                      const hasConversation = Boolean(lastMessage);
                       const highlightRow = isPending || isActive;
 
                       return (
-                        <button
+                        <div
                           key={friend.id}
-                          type="button"
-                          onClick={() => startChatWithFriend(friend.id)}
                           className={cn(
-                            'flex w-full items-start gap-3 px-3 py-2 text-left transition',
+                            'flex items-start gap-2 px-3 py-2 transition',
                             highlightRow ? 'bg-primary/10' : 'hover:bg-secondary/60'
                           )}
                         >
-                          <img
-                            src={resolveFriendAvatarUrl(friend)}
-                            alt={`Foto de ${friend.name}`}
-                            className="mt-1 h-12 w-12 shrink-0 rounded-full border border-border/70 object-cover bg-secondary"
-                            onError={handleAvatarImageError}
-                          />
-                          <div className="min-w-0 flex-1 border-b border-border/50 pb-2.5">
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-1 text-sm font-semibold">{friend.name}</p>
-                              <span className={cn('shrink-0 text-[11px]', unreadCount ? 'text-primary' : 'text-muted-foreground')}>
-                                {lastTime}
-                              </span>
-                            </div>
-                            <div className="mt-1 flex items-center justify-between gap-2">
-                              <p className="line-clamp-1 text-xs text-muted-foreground">{preview}</p>
-                              {unreadCount > 0 && (
-                                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-primary-foreground">
-                                  {unreadCount > 99 ? '99+' : unreadCount}
+                          <button
+                            type="button"
+                            onClick={() => startChatWithFriend(friend.id)}
+                            className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                          >
+                            <img
+                              src={resolveFriendAvatarUrl(friend)}
+                              alt={`Foto de ${friend.name}`}
+                              className="mt-1 h-12 w-12 shrink-0 rounded-full border border-border/70 object-cover bg-secondary"
+                              onError={handleAvatarImageError}
+                            />
+                            <div className="min-w-0 flex-1 border-b border-border/50 pb-2.5 pr-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="line-clamp-1 text-sm font-semibold">{friend.name}</p>
+                                <span className={cn('shrink-0 text-[11px]', unreadCount ? 'text-primary' : 'text-muted-foreground')}>
+                                  {lastTime}
                                 </span>
-                              )}
+                              </div>
+                              <div className="mt-1 flex items-center justify-between gap-2">
+                                <p className="line-clamp-1 text-xs text-muted-foreground">{preview}</p>
+                                {unreadCount > 0 && (
+                                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-primary-foreground">
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        </button>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteConversationByFriend(friend.id)}
+                            disabled={!hasConversation}
+                            className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-background/70 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"
+                            title={`Apagar conversa com ${friend.name}`}
+                            aria-label={`Apagar conversa com ${friend.name}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       );
                     })}
                   </div>
