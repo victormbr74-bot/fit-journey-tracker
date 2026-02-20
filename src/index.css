@@ -431,6 +431,91 @@
       opacity: 1;
     }
   }
+
+  .level-up-celebration-overlay {
+    @apply fixed inset-0 z-[140] flex items-center justify-center px-4 py-8;
+    background:
+      radial-gradient(circle at 20% 12%, hsl(var(--warning) / 0.2), transparent 35%),
+      radial-gradient(circle at 80% 0%, hsl(var(--primary) / 0.22), transparent 36%),
+      radial-gradient(circle at 50% 80%, hsl(var(--success) / 0.2), transparent 40%),
+      hsl(var(--background) / 0.9);
+    backdrop-filter: blur(5px);
+  }
+
+  .level-up-firework-field {
+    @apply pointer-events-none absolute inset-0 overflow-hidden;
+  }
+
+  .level-up-firework {
+    @apply pointer-events-none absolute h-1 w-1;
+  }
+
+  .level-up-firework-spark {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 14px;
+    width: 4px;
+    border-radius: 9999px;
+    opacity: 0;
+    transform-origin: center bottom;
+    animation: level-up-spark-burst 1.45s cubic-bezier(0.2, 0.74, 0.3, 1) infinite;
+  }
+
+  .level-up-celebration-card {
+    @apply relative z-[2] w-full max-w-md rounded-3xl border border-primary/35 bg-card/95 px-6 py-8 text-center shadow-2xl;
+    animation: level-up-card-in 0.45s ease-out;
+    box-shadow: 0 24px 70px hsl(var(--background) / 0.7);
+  }
+
+  .level-up-badge-orb {
+    @apply mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full;
+    background: linear-gradient(145deg, hsl(var(--warning) / 0.95), hsl(var(--primary) / 0.95));
+    box-shadow:
+      0 0 0 5px hsl(var(--primary) / 0.2),
+      0 14px 36px hsl(var(--primary) / 0.42);
+    animation: level-up-orb-pop 0.85s ease-out;
+  }
+
+  @keyframes level-up-spark-burst {
+    0% {
+      opacity: 0;
+      transform: rotate(var(--spark-angle)) translateY(0) scaleY(0.3);
+    }
+    15% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      transform: rotate(var(--spark-angle)) translateY(calc(-1 * var(--spark-distance))) scaleY(1);
+    }
+  }
+
+  @keyframes level-up-card-in {
+    from {
+      opacity: 0;
+      transform: translateY(16px) scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes level-up-orb-pop {
+    0% {
+      transform: scale(0.72);
+      opacity: 0;
+    }
+    70% {
+      transform: scale(1.08);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
 }
 
 /* Custom scrollbar */

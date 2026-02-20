@@ -5203,6 +5203,28 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     toast.success('Historico da conversa removido.');
   };
 
+  const handleDeleteChatMessage = (messageId: string) => {
+    const targetMessage = socialState.chatMessages.find((message) => message.id === messageId);
+    if (!targetMessage) return;
+
+    const senderLabel =
+      targetMessage.sender === 'me'
+        ? 'enviada por voce'
+        : `de ${friendsById.get(targetMessage.friendId)?.name || 'contato'}`;
+    const confirmed = window.confirm(`Excluir esta mensagem ${senderLabel} neste aparelho?`);
+    if (!confirmed) return;
+
+    setSocialState((previous) => ({
+      ...previous,
+      chatMessages: previous.chatMessages.filter((message) => message.id !== messageId),
+    }));
+
+    setPendingChatMessageId((previous) => (previous === messageId ? '' : previous));
+    setHighlightedChatMessageId((previous) => (previous === messageId ? '' : previous));
+    chatMessageElementsRef.current.delete(messageId);
+    toast.success('Mensagem excluida.');
+  };
+
   const handleClearAllChatHistory = () => {
     const confirmed = window.confirm('Apagar todo o historico do FitChat neste aparelho?');
     if (!confirmed) return;
@@ -6883,6 +6905,15 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                     </button>
                                   )}
                                   <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteChatMessage(message.id)}
+                                      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground/80 transition hover:bg-background/70 hover:text-destructive"
+                                      title="Excluir mensagem"
+                                      aria-label="Excluir mensagem"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
                                     <span>{formatTime(message.createdAt)}</span>
                                     {isMine && (
                                       <CheckCheck
