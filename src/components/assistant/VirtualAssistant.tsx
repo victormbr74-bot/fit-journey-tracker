@@ -1,10 +1,11 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useProfile } from '@/hooks/useProfile';
 import { generateDietPlan } from '@/lib/dietGenerator';
 import { supabase } from '@/integrations/supabase/client';
 import {
   ASSISTANT_CHAT_STORAGE_PREFIX,
+  ASSISTANT_BODY_COMPOSITION_STORAGE_PREFIX,
   ASSISTANT_REMINDER_STORAGE_PREFIX,
   ASSISTANT_STATE_STORAGE_PREFIX,
   DIET_PLAN_STORAGE_PREFIX,
@@ -20,12 +21,18 @@ import { toast } from 'sonner';
 import {
   Bell,
   CheckCircle2,
+  FileText,
   Dumbbell,
   Flame,
+  LineChart,
+  Loader2,
+  Plus,
+  Ruler,
   Send,
   Sparkles,
   Target,
   Trash2,
+  Upload,
   Utensils,
 } from 'lucide-react';
 
@@ -63,6 +70,80 @@ interface ConversationState {
     title?: string;
   };
 }
+
+type SkinfoldSex = 'male' | 'female';
+type BioimpedanceSource = 'app' | 'clinic';
+
+const skinfoldFields = [
+  { id: 'chest', label: 'Peitoral' },
+  { id: 'midaxillary', label: 'Axilar media' },
+  { id: 'triceps', label: 'Triceps' },
+  { id: 'subscapular', label: 'Subescapular' },
+  { id: 'abdomen', label: 'Abdomen' },
+  { id: 'suprailiac', label: 'Suprailiaca' },
+  { id: 'thigh', label: 'Coxa' },
+] as const;
+
+type SkinfoldFieldId = (typeof skinfoldFields)[number]['id'];
+
+interface SkinfoldFormState {
+  sex: SkinfoldSex;
+  weightKg: string;
+  chest: string;
+  midaxillary: string;
+  triceps: string;
+  subscapular: string;
+  abdomen: string;
+  suprailiac: string;
+  thigh: string;
+}
+
+type SkinfoldValues = Record<SkinfoldFieldId, number>;
+
+interface SkinfoldHistoryEntry {
+  id: string;
+  type: 'skinfold';
+  createdAt: string;
+  sex: SkinfoldSex;
+  weightKg: number;
+  age: number;
+  foldsMm: SkinfoldValues;
+  sumMm: number;
+  bodyDensity: number;
+  bodyFatPercent: number;
+  fatMassKg: number;
+  leanMassKg: number;
+}
+
+interface BioimpedanceMetric {
+  label: string;
+  value: string;
+}
+
+interface BioimpedancePdfHistoryEntry {
+  id: string;
+  type: 'bioimpedance_pdf';
+  createdAt: string;
+  source: BioimpedanceSource;
+  fileName: string;
+  fileSize: number;
+  summary: string;
+  metrics: BioimpedanceMetric[];
+}
+
+type BodyCompositionHistoryEntry = SkinfoldHistoryEntry | BioimpedancePdfHistoryEntry;
+
+const defaultSkinfoldForm = (defaultWeight = 0): SkinfoldFormState => ({
+  sex: 'male',
+  weightKg: defaultWeight > 0 ? defaultWeight.toString() : '',
+  chest: '',
+  midaxillary: '',
+  triceps: '',
+  subscapular: '',
+  abdomen: '',
+  suprailiac: '',
+  thigh: '',
+});
 
 const focusLabels: Record<FocusId, string> = {
   peito: 'Peito',
@@ -108,6 +189,8 @@ const quickPrompts = [
   'Quero uma dieta para perder peso',
   'Como esta meu progresso da semana?',
   'Me lembre de treinar as 18:30',
+  'Quero medir gordura por dobras cutaneas',
+  'Analisar PDF de bioimpedancia (app ou clinica)',
   'Quero conversar, estou sem motivacao',
 ];
 
@@ -159,6 +242,234 @@ const formatReminderDate = (value: string): string =>
 const getNotificationState = (): NotificationState => {
   if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
   return Notification.permission;
+};
+
+const formatBodyCompositionDate = (value: string): string =>
+  new Date(value).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+const formatFileSize = (value: number): string => {
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+  return `${value} B`;
+};
+
+const parsePositiveDecimal = (value: string): number | null => {
+  const cleaned = value.replace(',', '.').trim();
+  if (!cleaned) return null;
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+};
+
+const roundTo = (value: number, digits: number): number => Number(value.toFixed(digits));
+
+const getSkinfoldValuesFromForm = (form: SkinfoldFormState): SkinfoldValues | null => {
+  const folds: Partial<SkinfoldValues> = {};
+
+  for (const field of skinfoldFields) {
+    const parsedValue = parsePositiveDecimal(form[field.id]);
+    if (parsedValue === null) return null;
+    folds[field.id] = parsedValue;
+  }
+
+  return folds as SkinfoldValues;
+};
+
+const calculateSkinfoldBodyComposition = ({
+  sex,
+  age,
+  weightKg,
+  foldsMm,
+}: {
+  sex: SkinfoldSex;
+  age: number;
+  weightKg: number;
+  foldsMm: SkinfoldValues;
+}) => {
+  const foldsArray = Object.values(foldsMm);
+  const sumMm = foldsArray.reduce((sum, fold) => sum + fold, 0);
+  const sumSquared = sumMm * sumMm;
+  const safeAge = Math.max(10, Math.min(99, age));
+
+  const bodyDensity =
+    sex === 'male'
+      ? 1.112 - 0.00043499 * sumMm + 0.00000055 * sumSquared - 0.00028826 * safeAge
+      : 1.097 - 0.00046971 * sumMm + 0.00000056 * sumSquared - 0.00012828 * safeAge;
+
+  const bodyFatPercent = Math.max(2, Math.min(60, (495 / bodyDensity) - 450));
+  const fatMassKg = weightKg * (bodyFatPercent / 100);
+  const leanMassKg = Math.max(0, weightKg - fatMassKg);
+
+  return {
+    sumMm: roundTo(sumMm, 1),
+    bodyDensity: roundTo(bodyDensity, 4),
+    bodyFatPercent: roundTo(bodyFatPercent, 1),
+    fatMassKg: roundTo(fatMassKg, 1),
+    leanMassKg: roundTo(leanMassKg, 1),
+  };
+};
+
+const getBodyFatClassification = (sex: SkinfoldSex, bodyFatPercent: number): string => {
+  if (sex === 'male') {
+    if (bodyFatPercent < 6) return 'essencial';
+    if (bodyFatPercent < 14) return 'atletico';
+    if (bodyFatPercent < 18) return 'fitness';
+    if (bodyFatPercent < 25) return 'medio';
+    return 'alto';
+  }
+
+  if (bodyFatPercent < 14) return 'essencial';
+  if (bodyFatPercent < 21) return 'atletico';
+  if (bodyFatPercent < 25) return 'fitness';
+  if (bodyFatPercent < 32) return 'medio';
+  return 'alto';
+};
+
+const extractTextFromPdfFile = async (file: File): Promise<string> => {
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const fileBuffer = await file.arrayBuffer();
+  const loadingTask = getDocument({
+    data: new Uint8Array(fileBuffer),
+    disableWorker: true,
+    isEvalSupported: false,
+  });
+  const pdfDocument = await loadingTask.promise;
+  const maxPages = Math.min(pdfDocument.numPages, 25);
+  const pageTexts: string[] = [];
+  let totalLength = 0;
+
+  for (let pageIndex = 1; pageIndex <= maxPages; pageIndex += 1) {
+    const page = await pdfDocument.getPage(pageIndex);
+    const textContent = await page.getTextContent();
+    const pageText = (textContent.items as Array<{ str?: string }>)
+      .map((item) => item.str || '')
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!pageText) continue;
+
+    pageTexts.push(pageText);
+    totalLength += pageText.length;
+    if (totalLength >= 20000) break;
+  }
+
+  return pageTexts.join('\n').trim();
+};
+
+const parseBioimpedanceMetrics = (reportText: string): BioimpedanceMetric[] => {
+  const compact = reportText.replace(/\s+/g, ' ').trim();
+  const metrics: BioimpedanceMetric[] = [];
+
+  const pushMetric = (label: string, value: string | null, unit?: string) => {
+    if (!value) return;
+    const normalizedValue = value.replace(',', '.');
+    metrics.push({
+      label,
+      value: unit ? `${normalizedValue} ${unit}` : normalizedValue,
+    });
+  };
+
+  pushMetric(
+    'Peso',
+    compact.match(/(?:peso|weight)\s*[:-]?\s*(\d{2,3}(?:[.,]\d+)?)/i)?.[1] || null,
+    'kg'
+  );
+  pushMetric(
+    '% Gordura corporal',
+    compact.match(/(?:gordura corporal|body fat|pbf)\s*[:-]?\s*(\d{1,2}(?:[.,]\d+)?)\s*%/i)?.[1] || null,
+    '%'
+  );
+  pushMetric(
+    'Massa muscular',
+    compact.match(/(?:massa muscular|skeletal muscle)\s*[:-]?\s*(\d{1,3}(?:[.,]\d+)?)/i)?.[1] || null,
+    'kg'
+  );
+  pushMetric(
+    'Massa magra',
+    compact.match(/(?:massa magra|lean mass|ffm)\s*[:-]?\s*(\d{1,3}(?:[.,]\d+)?)/i)?.[1] || null,
+    'kg'
+  );
+  pushMetric(
+    'IMC',
+    compact.match(/(?:imc|bmi)\s*[:-]?\s*(\d{1,2}(?:[.,]\d+)?)/i)?.[1] || null
+  );
+  pushMetric(
+    'Agua corporal',
+    compact.match(/(?:agua corporal|body water|tbw)\s*[:-]?\s*(\d{1,2}(?:[.,]\d+)?)\s*%/i)?.[1] || null,
+    '%'
+  );
+  pushMetric(
+    'Gordura visceral',
+    compact.match(/(?:gordura visceral|visceral fat)\s*[:-]?\s*(\d{1,2}(?:[.,]\d+)?)/i)?.[1] || null
+  );
+  pushMetric(
+    'TMB',
+    compact.match(/(?:taxa metabolica basal|metabolismo basal|bmr|tmb)\s*[:-]?\s*(\d{3,5})/i)?.[1] || null,
+    'kcal'
+  );
+
+  return metrics.slice(0, 8);
+};
+
+const buildBioimpedanceSummary = (source: BioimpedanceSource, metrics: BioimpedanceMetric[]): string => {
+  const sourceLabel = source === 'clinic' ? 'clinica' : 'app';
+  if (metrics.length === 0) {
+    return `PDF de bioimpedancia (${sourceLabel}) lido, mas nao consegui identificar metricas estruturadas automaticamente.`;
+  }
+
+  const bodyFat = metrics.find((metric) => metric.label === '% Gordura corporal');
+  const leanMass = metrics.find((metric) => metric.label === 'Massa magra');
+  const muscle = metrics.find((metric) => metric.label === 'Massa muscular');
+  const bmi = metrics.find((metric) => metric.label === 'IMC');
+
+  const highlights = [bodyFat, leanMass, muscle, bmi]
+    .filter((metric): metric is BioimpedanceMetric => Boolean(metric))
+    .map((metric) => `${metric.label}: ${metric.value}`);
+
+  if (highlights.length === 0) {
+    return `PDF de bioimpedancia (${sourceLabel}) analisado com ${metrics.length} metrica(s) reconhecida(s).`;
+  }
+
+  return `PDF de bioimpedancia (${sourceLabel}) analisado. Destaques: ${highlights.join(' | ')}.`;
+};
+
+const parseBodyCompositionHistory = (value: string | null): BodyCompositionHistoryEntry[] => {
+  if (!value) return [];
+
+  try {
+    const parsed = JSON.parse(value) as unknown[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry): entry is BodyCompositionHistoryEntry => {
+        if (!entry || typeof entry !== 'object') return false;
+        const candidate = entry as Partial<BodyCompositionHistoryEntry>;
+        if (typeof candidate.id !== 'string') return false;
+        if (candidate.type === 'skinfold') {
+          return (
+            typeof candidate.bodyFatPercent === 'number' &&
+            typeof candidate.leanMassKg === 'number' &&
+            typeof candidate.sumMm === 'number'
+          );
+        }
+        if (candidate.type === 'bioimpedance_pdf') {
+          return (
+            typeof candidate.summary === 'string' &&
+            typeof candidate.fileName === 'string' &&
+            Array.isArray(candidate.metrics)
+          );
+        }
+        return false;
+      })
+      .slice(0, 30);
+  } catch {
+    return [];
+  }
 };
 
 const welcomeMessage = (name: string): AssistantMessage => ({
@@ -375,30 +686,52 @@ export function VirtualAssistant() {
   const [loadedChatKey, setLoadedChatKey] = useState<string | null>(null);
   const [loadedReminderKey, setLoadedReminderKey] = useState<string | null>(null);
   const [loadedStateKey, setLoadedStateKey] = useState<string | null>(null);
+  const [loadedBodyCompositionKey, setLoadedBodyCompositionKey] = useState<string | null>(null);
   const [aiFailures, setAiFailures] = useState(0);
+  const [skinfoldForm, setSkinfoldForm] = useState<SkinfoldFormState>(() =>
+    defaultSkinfoldForm(profile?.weight || 0)
+  );
+  const [bodyCompositionHistory, setBodyCompositionHistory] = useState<BodyCompositionHistoryEntry[]>([]);
+  const [selectedBioimpedanceSource, setSelectedBioimpedanceSource] = useState<BioimpedanceSource>('app');
+  const [selectedBioimpedancePdf, setSelectedBioimpedancePdf] = useState<File | null>(null);
+  const [isAnalyzingBioimpedancePdf, setIsAnalyzingBioimpedancePdf] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const bioimpedanceFileInputRef = useRef<HTMLInputElement | null>(null);
+  const profileId = profile?.id || null;
 
   const chatStorageKey = useMemo(
-    () => (profile ? `${ASSISTANT_CHAT_STORAGE_PREFIX}${profile.id}` : null),
-    [profile?.id]
+    () => (profileId ? `${ASSISTANT_CHAT_STORAGE_PREFIX}${profileId}` : null),
+    [profileId]
   );
   const reminderStorageKey = useMemo(
-    () => (profile ? `${ASSISTANT_REMINDER_STORAGE_PREFIX}${profile.id}` : null),
-    [profile?.id]
+    () => (profileId ? `${ASSISTANT_REMINDER_STORAGE_PREFIX}${profileId}` : null),
+    [profileId]
   );
   const stateStorageKey = useMemo(
-    () => (profile ? `${ASSISTANT_STATE_STORAGE_PREFIX}${profile.id}` : null),
-    [profile?.id]
+    () => (profileId ? `${ASSISTANT_STATE_STORAGE_PREFIX}${profileId}` : null),
+    [profileId]
+  );
+  const bodyCompositionStorageKey = useMemo(
+    () => (profileId ? `${ASSISTANT_BODY_COMPOSITION_STORAGE_PREFIX}${profileId}` : null),
+    [profileId]
   );
 
   const isLoadingStorage =
     (chatStorageKey !== null && loadedChatKey !== chatStorageKey) ||
     (reminderStorageKey !== null && loadedReminderKey !== reminderStorageKey) ||
-    (stateStorageKey !== null && loadedStateKey !== stateStorageKey);
+    (stateStorageKey !== null && loadedStateKey !== stateStorageKey) ||
+    (bodyCompositionStorageKey !== null && loadedBodyCompositionKey !== bodyCompositionStorageKey);
 
   const sortedReminders = useMemo(
     () => [...reminders].sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()),
     [reminders]
+  );
+  const recentBodyCompositionEntries = useMemo(
+    () =>
+      [...bodyCompositionHistory]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 5),
+    [bodyCompositionHistory]
   );
 
   const appendMessage = (role: AssistantRole, text: string) => {
@@ -421,6 +754,141 @@ export function VirtualAssistant() {
     return permission;
   };
 
+  const updateSkinfoldField = (field: keyof SkinfoldFormState, value: string) => {
+    setSkinfoldForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleSaveSkinfoldAnalysis = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!profile) {
+      toast.error('Complete seu perfil antes de registrar medidas corporais.');
+      return;
+    }
+
+    const parsedWeight = parsePositiveDecimal(skinfoldForm.weightKg);
+    if (parsedWeight === null) {
+      toast.error('Informe um peso valido para calcular a composicao corporal.');
+      return;
+    }
+
+    const foldsMm = getSkinfoldValuesFromForm(skinfoldForm);
+    if (!foldsMm) {
+      toast.error('Preencha todas as 7 dobras cutaneas com valores em mm.');
+      return;
+    }
+
+    const age = profile.age > 0 ? profile.age : 25;
+    const calculation = calculateSkinfoldBodyComposition({
+      sex: skinfoldForm.sex,
+      age,
+      weightKg: parsedWeight,
+      foldsMm,
+    });
+
+    const entry: SkinfoldHistoryEntry = {
+      id: crypto.randomUUID(),
+      type: 'skinfold',
+      createdAt: nowIso(),
+      sex: skinfoldForm.sex,
+      weightKg: parsedWeight,
+      age,
+      foldsMm,
+      sumMm: calculation.sumMm,
+      bodyDensity: calculation.bodyDensity,
+      bodyFatPercent: calculation.bodyFatPercent,
+      fatMassKg: calculation.fatMassKg,
+      leanMassKg: calculation.leanMassKg,
+    };
+
+    setBodyCompositionHistory((current) => [entry, ...current].slice(0, 30));
+
+    const classification = getBodyFatClassification(skinfoldForm.sex, calculation.bodyFatPercent);
+    const responseLines = [
+      `Analise por dobras cutaneas concluida (${entry.sex === 'male' ? 'masculino' : 'feminino'}).`,
+      `- Gordura corporal estimada: ${entry.bodyFatPercent}% (${classification})`,
+      `- Massa gorda estimada: ${entry.fatMassKg} kg`,
+      `- Massa magra estimada: ${entry.leanMassKg} kg`,
+      `- Soma das 7 dobras: ${entry.sumMm} mm`,
+    ];
+
+    appendMessage('assistant', responseLines.join('\n'));
+    toast.success('Medidas por dobras cutaneas registradas.');
+  };
+
+  const handleBioimpedancePdfSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    event.target.value = '';
+    if (!file) return;
+
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      toast.error('Selecione um arquivo PDF de bioimpedancia.');
+      return;
+    }
+
+    setSelectedBioimpedancePdf(file);
+  };
+
+  const handleAnalyzeBioimpedancePdf = async () => {
+    if (!selectedBioimpedancePdf) {
+      toast.error('Selecione um PDF para iniciar a analise.');
+      return;
+    }
+
+    if (!profile) {
+      toast.error('Complete seu perfil antes de analisar bioimpedancia.');
+      return;
+    }
+
+    setIsAnalyzingBioimpedancePdf(true);
+    try {
+      const extractedText = await extractTextFromPdfFile(selectedBioimpedancePdf);
+      if (extractedText.length < 80) {
+        toast.error('Nao consegui extrair texto util do PDF. Tente um arquivo com texto selecionavel.');
+        return;
+      }
+
+      const metrics = parseBioimpedanceMetrics(extractedText);
+      const summary = buildBioimpedanceSummary(selectedBioimpedanceSource, metrics);
+
+      const entry: BioimpedancePdfHistoryEntry = {
+        id: crypto.randomUUID(),
+        type: 'bioimpedance_pdf',
+        createdAt: nowIso(),
+        source: selectedBioimpedanceSource,
+        fileName: selectedBioimpedancePdf.name,
+        fileSize: selectedBioimpedancePdf.size,
+        summary,
+        metrics,
+      };
+
+      setBodyCompositionHistory((current) => [entry, ...current].slice(0, 30));
+
+      const metricsPreview = metrics.length
+        ? metrics.slice(0, 6).map((metric) => `- ${metric.label}: ${metric.value}`).join('\n')
+        : '- Nenhuma metrica reconhecida automaticamente.';
+
+      appendMessage(
+        'assistant',
+        [
+          `Analise de bioimpedancia finalizada (${selectedBioimpedanceSource === 'clinic' ? 'clinica' : 'app'}).`,
+          summary,
+          'Principais metricas:',
+          metricsPreview,
+        ].join('\n')
+      );
+
+      toast.success('PDF de bioimpedancia analisado com sucesso.');
+      setSelectedBioimpedancePdf(null);
+    } catch (error) {
+      console.error('Erro ao analisar PDF de bioimpedancia:', error);
+      toast.error('Nao foi possivel analisar o PDF de bioimpedancia.');
+    } finally {
+      setIsAnalyzingBioimpedancePdf(false);
+    }
+  };
+
   const generateStatusSummary = (): string => {
     if (!profile) return 'Complete seu perfil para eu gerar um resumo completo.';
 
@@ -429,6 +897,7 @@ export function VirtualAssistant() {
     const completedChallenges = userChallenges.filter((challenge) => challenge.is_completed).length;
     const pendingChallenges = userChallenges.filter((challenge) => !challenge.is_completed).length;
     const lastRun = runSessions[0];
+    const latestBodyEntry = bodyCompositionHistory[0];
     const lastRunSummary = lastRun
       ? `${lastRun.distance.toFixed(1)} km em ${Math.max(1, Math.round(lastRun.duration / 60))} min`
       : 'sem corrida registrada';
@@ -442,6 +911,13 @@ export function VirtualAssistant() {
       `- Desafios concluidos: ${completedChallenges}`,
       `- Desafios pendentes: ${pendingChallenges}`,
       `- Lembretes pendentes: ${pendingReminders}`,
+      `- Ultima composicao corporal: ${
+        latestBodyEntry
+          ? latestBodyEntry.type === 'skinfold'
+            ? `${latestBodyEntry.bodyFatPercent}% por dobras`
+            : `PDF ${latestBodyEntry.source === 'clinic' ? 'clinica' : 'app'}`
+          : 'sem registros'
+      }`,
     ].join('\n');
   };
 
@@ -736,6 +1212,20 @@ const buildRecentHistory = (): string =>
       return respond(buildTodayPlan());
     }
 
+    if (containsAny(normalizedMessage, ['dobras cutaneas', 'dobras', 'pregas'])) {
+      nextState.pendingAction = null;
+      return respond(
+        'Perfeito. Use a secao "Composicao corporal" logo abaixo do chat e preencha as 7 dobras para eu calcular gordura corporal, massa gorda e massa magra.'
+      );
+    }
+
+    if (containsAny(normalizedMessage, ['bioimpedancia', 'bioimpedance', 'pdf'])) {
+      nextState.pendingAction = null;
+      return respond(
+        'Claro. Na secao "Composicao corporal", escolha origem (app ou clinica), anexe o PDF e toque em "Analisar PDF".'
+      );
+    }
+
     const wantsReminder =
       containsAny(normalizedMessage, ['lembrete', 'lembrar', 'me lembre', 'me lembra']) ||
       nextState.pendingAction === 'reminder';
@@ -994,6 +1484,12 @@ const buildRecentHistory = (): string =>
   }, []);
 
   useEffect(() => {
+    if (!profile?.weight) return;
+    if (skinfoldForm.weightKg.trim()) return;
+    setSkinfoldForm((current) => ({ ...current, weightKg: profile.weight.toString() }));
+  }, [profile?.weight, skinfoldForm.weightKg]);
+
+  useEffect(() => {
     if (!chatStorageKey || !profile) {
       setMessages([]);
       setLoadedChatKey(null);
@@ -1090,6 +1586,18 @@ const buildRecentHistory = (): string =>
   }, [stateStorageKey]);
 
   useEffect(() => {
+    if (!bodyCompositionStorageKey) {
+      setBodyCompositionHistory([]);
+      setLoadedBodyCompositionKey(null);
+      return;
+    }
+
+    const stored = window.localStorage.getItem(bodyCompositionStorageKey);
+    setBodyCompositionHistory(parseBodyCompositionHistory(stored));
+    setLoadedBodyCompositionKey(bodyCompositionStorageKey);
+  }, [bodyCompositionStorageKey]);
+
+  useEffect(() => {
     if (!chatStorageKey || loadedChatKey !== chatStorageKey) return;
     window.localStorage.setItem(chatStorageKey, JSON.stringify(messages.slice(-120)));
   }, [messages, chatStorageKey, loadedChatKey]);
@@ -1103,6 +1611,11 @@ const buildRecentHistory = (): string =>
     if (!stateStorageKey || loadedStateKey !== stateStorageKey) return;
     window.localStorage.setItem(stateStorageKey, JSON.stringify(conversationState));
   }, [conversationState, stateStorageKey, loadedStateKey]);
+
+  useEffect(() => {
+    if (!bodyCompositionStorageKey || loadedBodyCompositionKey !== bodyCompositionStorageKey) return;
+    window.localStorage.setItem(bodyCompositionStorageKey, JSON.stringify(bodyCompositionHistory.slice(0, 30)));
+  }, [bodyCompositionHistory, bodyCompositionStorageKey, loadedBodyCompositionKey]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -1244,6 +1757,186 @@ const buildRecentHistory = (): string =>
       <Card className="glass-card">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2">
+            <LineChart className="w-5 h-5 text-primary" />
+            Composicao corporal
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Opcoes por dobras cutaneas e por PDF de bioimpedancia (apps e clinicas).
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <form className="rounded-xl border border-border bg-secondary/20 p-4 space-y-3" onSubmit={handleSaveSkinfoldAnalysis}>
+              <div className="flex items-center gap-2">
+                <Ruler className="w-4 h-4 text-primary" />
+                <p className="font-medium text-sm">Dobras cutaneas (Jackson-Pollock 7)</p>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={skinfoldForm.sex === 'male' ? 'default' : 'outline'}
+                  className="flex-1"
+                  onClick={() => updateSkinfoldField('sex', 'male')}
+                >
+                  Masculino
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={skinfoldForm.sex === 'female' ? 'default' : 'outline'}
+                  className="flex-1"
+                  onClick={() => updateSkinfoldField('sex', 'female')}
+                >
+                  Feminino
+                </Button>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Peso atual (kg)</p>
+                <Input
+                  type="number"
+                  step="0.1"
+                  min="1"
+                  value={skinfoldForm.weightKg}
+                  onChange={(event) => updateSkinfoldField('weightKg', event.target.value)}
+                  placeholder="Ex: 78.5"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {skinfoldFields.map((field) => (
+                  <div key={field.id} className="space-y-1">
+                    <p className="text-xs text-muted-foreground">{field.label} (mm)</p>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="1"
+                      value={skinfoldForm[field.id]}
+                      onChange={(event) => updateSkinfoldField(field.id, event.target.value)}
+                      placeholder="0.0"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <Button type="submit" variant="energy" className="w-full">
+                <Plus className="w-4 h-4" />
+                Calcular por dobras
+              </Button>
+            </form>
+
+            <div className="rounded-xl border border-border bg-secondary/20 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" />
+                <p className="font-medium text-sm">PDF de bioimpedancia</p>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="flex-1"
+                  variant={selectedBioimpedanceSource === 'app' ? 'default' : 'outline'}
+                  onClick={() => setSelectedBioimpedanceSource('app')}
+                >
+                  App
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="flex-1"
+                  variant={selectedBioimpedanceSource === 'clinic' ? 'default' : 'outline'}
+                  onClick={() => setSelectedBioimpedanceSource('clinic')}
+                >
+                  Clinica
+                </Button>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => bioimpedanceFileInputRef.current?.click()}
+                disabled={isAnalyzingBioimpedancePdf}
+              >
+                <Upload className="w-4 h-4" />
+                Selecionar PDF de bioimpedancia
+              </Button>
+              <input
+                ref={bioimpedanceFileInputRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                className="hidden"
+                onChange={handleBioimpedancePdfSelected}
+              />
+
+              {selectedBioimpedancePdf ? (
+                <div className="rounded-lg border border-border bg-background/60 p-2 text-xs">
+                  <p className="font-medium">{selectedBioimpedancePdf.name}</p>
+                  <p className="text-muted-foreground">{formatFileSize(selectedBioimpedancePdf.size)}</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">Nenhum arquivo selecionado.</p>
+              )}
+
+              <Button
+                type="button"
+                variant="energy"
+                className="w-full"
+                onClick={handleAnalyzeBioimpedancePdf}
+                disabled={!selectedBioimpedancePdf || isAnalyzingBioimpedancePdf}
+              >
+                {isAnalyzingBioimpedancePdf ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Analisando PDF...
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-4 h-4" />
+                    Analisar PDF
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-secondary/10 p-4 space-y-2">
+            <p className="text-sm font-medium">Historico recente de composicao corporal</p>
+            {recentBodyCompositionEntries.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Ainda nao ha registros. Use uma das opcoes acima para registrar dobras ou analisar PDF.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {recentBodyCompositionEntries.map((entry) => (
+                  <div key={entry.id} className="rounded-lg border border-border/80 bg-background/70 p-2 text-xs">
+                    <p className="font-medium">
+                      {entry.type === 'skinfold' ? 'Dobras cutaneas' : 'Bioimpedancia PDF'} -{' '}
+                      {formatBodyCompositionDate(entry.createdAt)}
+                    </p>
+                    {entry.type === 'skinfold' ? (
+                      <p className="text-muted-foreground">
+                        Gordura: {entry.bodyFatPercent}% | Massa magra: {entry.leanMassKg} kg | Soma dobras: {entry.sumMm} mm
+                      </p>
+                    ) : (
+                      <p className="text-muted-foreground">
+                        {entry.summary} ({entry.fileName})
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="glass-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2">
             <Target className="w-5 h-5 text-warning" />
             Lembretes Ativos
           </CardTitle>
@@ -1284,7 +1977,7 @@ const buildRecentHistory = (): string =>
 
       <Card className="glass-card">
         <CardContent className="py-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
             <div className="flex items-center gap-2">
               <Dumbbell className="w-4 h-4 text-primary" />
               Conversa e monta treino em etapas
@@ -1296,6 +1989,10 @@ const buildRecentHistory = (): string =>
             <div className="flex items-center gap-2">
               <Flame className="w-4 h-4 text-warning" />
               Motivacao, desafios e lembretes no mesmo chat
+            </div>
+            <div className="flex items-center gap-2">
+              <LineChart className="w-4 h-4 text-info" />
+              Analise corporal por dobras e PDF de bioimpedancia
             </div>
           </div>
         </CardContent>
