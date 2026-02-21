@@ -6,12 +6,14 @@ import { useAuth } from '@/hooks/useAuth';
 import { Mail, Lock, User, ArrowRight, Loader2, Eye, EyeOff, Smartphone } from 'lucide-react';
 import { toast } from 'sonner';
 import soufitLogo from '@/assets/soufit-logo.png';
+import { ProfileType, PROFILE_TYPES } from '@/types/user';
 
 export function AuthForm() {
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [profileType, setProfileType] = useState<ProfileType>('client');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -54,7 +56,13 @@ export function AuthForm() {
           return;
         }
 
-        const { data, error: signUpError } = await signUp(email, password, name, normalizedPhone);
+        const { data, error: signUpError } = await signUp(
+          email,
+          password,
+          name,
+          normalizedPhone,
+          profileType
+        );
         if (signUpError) {
           if (signUpError.message.includes('already registered')) {
             setError('Este email ja esta cadastrado');
@@ -66,6 +74,7 @@ export function AuthForm() {
           setIsLogin(true);
           setError('');
           setPhone('');
+          setProfileType('client');
         }
       }
     } catch {
@@ -116,6 +125,29 @@ export function AuthForm() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {!isLogin && (
+              <div className="fade-in space-y-2">
+                <label htmlFor="account-type" className="block text-sm font-medium text-foreground/90">
+                  Tipo de conta
+                </label>
+                <select
+                  id="account-type"
+                  value={profileType}
+                  onChange={(event) => setProfileType(event.target.value as ProfileType)}
+                  className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  {PROFILE_TYPES.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {PROFILE_TYPES.find((option) => option.id === profileType)?.description}
+                </p>
+              </div>
+            )}
+
             {!isLogin && (
               <div className="relative fade-in">
                 <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />

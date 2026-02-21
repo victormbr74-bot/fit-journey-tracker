@@ -135,7 +135,7 @@ export function Dashboard() {
         onClick={() => setShowWeightModal(true)}
       >
         <Plus className="w-5 h-5" />
-        Registrar Peso
+        Registrar Peso e Medidas
       </Button>
 
       <AddWeightModal

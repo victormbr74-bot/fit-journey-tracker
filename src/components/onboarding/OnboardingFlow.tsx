@@ -1,17 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
-import { GOALS, MUSCLE_GROUPS, Goal } from '@/types/user';
+import { GOALS, isProfileType, MUSCLE_GROUPS, Goal, ProfileType } from '@/types/user';
 import { ArrowRight, ArrowLeft, Check, Ruler, Weight, Calendar, Target, Dumbbell, Clock, Smartphone } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatHandleInput, getHandleBodyLimits, isValidHandle, toHandle } from '@/lib/handleUtils';
 
 type Step = 'handle' | 'phone' | 'birthdate' | 'weight' | 'height' | 'goal' | 'muscles' | 'frequency';
 
-const steps: Step[] = ['handle', 'phone', 'birthdate', 'weight', 'height', 'goal', 'muscles', 'frequency'];
+const CLIENT_STEPS: Step[] = ['handle', 'phone', 'birthdate', 'weight', 'height', 'goal', 'muscles', 'frequency'];
+const PROFESSIONAL_STEPS: Step[] = ['handle', 'phone'];
 const { min: handleMinLength, max: handleMaxLength } = getHandleBodyLimits();
 
 export function OnboardingFlow() {
@@ -31,6 +32,12 @@ export function OnboardingFlow() {
   const { user, signOut } = useAuth();
   const { checkHandleAvailability, createProfile, reserveUniqueHandle } = useProfile();
   const navigate = useNavigate();
+  const resolvedProfileType: ProfileType = isProfileType(user?.profileType) ? user.profileType : 'client';
+  const isProfessionalAccount = resolvedProfileType !== 'client';
+  const steps = useMemo(
+    () => (isProfessionalAccount ? PROFESSIONAL_STEPS : CLIENT_STEPS),
+    [isProfessionalAccount]
+  );
 
   useEffect(() => {
     if (!user) return;
@@ -38,6 +45,10 @@ export function OnboardingFlow() {
     setHandle(toHandle(seed));
     setPhone(user.phone || '');
   }, [user]);
+
+  useEffect(() => {
+    setCurrentStep((previousStep) => Math.min(previousStep, steps.length - 1));
+  }, [steps]);
 
   const calculateAge = (dateString: string): number => {
     const today = new Date();
@@ -85,33 +96,56 @@ export function OnboardingFlow() {
       return;
     }
 
-    if (goal && user) {
-      setLoading(true);
-      const age = calculateAge(birthdate);
+    if (!user) return;
 
-      const { error } = await createProfile({
-        name: user.name || user.email?.split('@')[0] || 'Usuario',
-        handle: toHandle(handle),
-        email: user.email || '',
-        phone: phone.trim() || user.phone || '',
-        birthdate,
-        age,
-        weight: parseFloat(weight),
-        height: parseFloat(height),
-        goal,
-        muscle_groups: selectedMuscles,
-        training_frequency: frequency,
-      });
+    const baseProfileData = {
+      name: user.name || user.email?.split('@')[0] || 'Usuario',
+      handle: toHandle(handle),
+      email: user.email || '',
+      phone: phone.trim() || user.phone || '',
+      profile_type: resolvedProfileType,
+    } as const;
 
-      if (error) {
-        toast.error(error.message || 'Erro ao salvar perfil. Tente novamente.');
-        console.error(error);
-      } else {
-        toast.success('Perfil criado com sucesso!');
-        navigate('/dashboard');
-      }
-      setLoading(false);
+    if (!isProfessionalAccount && !goal) {
+      toast.error('Selecione um objetivo para continuar.');
+      return;
     }
+
+    setLoading(true);
+
+    const { error } = await createProfile(
+      isProfessionalAccount
+        ? {
+            ...baseProfileData,
+            birthdate: '',
+            age: 0,
+            weight: 0,
+            height: 0,
+            goal: 'maintain',
+            muscle_groups: [],
+            training_frequency: 3,
+          }
+        : {
+            ...baseProfileData,
+            birthdate,
+            age: calculateAge(birthdate),
+            weight: parseFloat(weight),
+            height: parseFloat(height),
+            goal: goal || 'maintain',
+            muscle_groups: selectedMuscles,
+            training_frequency: frequency,
+          }
+    );
+
+    if (error) {
+      toast.error(error.message || 'Erro ao salvar perfil. Tente novamente.');
+      console.error(error);
+    } else {
+      toast.success('Perfil criado com sucesso!');
+      navigate('/dashboard');
+    }
+
+    setLoading(false);
   };
 
   const handleBack = () => {

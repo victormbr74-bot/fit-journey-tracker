@@ -16,6 +16,7 @@ import {
   RunSession,
   Challenge,
   UserChallengeProgress,
+  isProfileType,
 } from '@/types/user';
 
 type ProfileContextValue = {
@@ -137,6 +138,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
   const backendCapabilitiesRef = useRef({
     handleColumnAvailable: true,
     phoneColumnAvailable: true,
+    profileTypeColumnAvailable: true,
     reserveHandleRpcAvailable: true,
     handleAvailabilityRpcAvailable: true,
     handleSearchRpcAvailable: true,
@@ -211,6 +213,11 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const disablePhoneFeature = useCallback(() => {
     backendCapabilitiesRef.current.phoneColumnAvailable = false;
+    persistCapabilities();
+  }, [persistCapabilities]);
+
+  const disableProfileTypeFeature = useCallback(() => {
+    backendCapabilitiesRef.current.profileTypeColumnAvailable = false;
     persistCapabilities();
   }, [persistCapabilities]);
 
@@ -432,6 +439,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         name: data.name,
         handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
+        profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
         phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -893,6 +901,11 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         if (backendCapabilitiesRef.current.phoneColumnAvailable) {
           payload.phone = profileData.phone || user.phone || null;
         }
+        if (backendCapabilitiesRef.current.profileTypeColumnAvailable) {
+          payload.profile_type = isProfileType(profileData.profile_type)
+            ? profileData.profile_type
+            : user.profileType || 'client';
+        }
 
         return payload;
       };
@@ -907,12 +920,21 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       let payload = buildPayload();
       let { data, error } = await upsertWithPayload(payload);
 
-      if (error && (isMissingProfilesColumnError(error, 'handle') || isMissingProfilesColumnError(error, 'phone'))) {
+      if (
+        error && (
+          isMissingProfilesColumnError(error, 'handle') ||
+          isMissingProfilesColumnError(error, 'phone') ||
+          isMissingProfilesColumnError(error, 'profile_type')
+        )
+      ) {
         if (isMissingProfilesColumnError(error, 'handle')) {
           disableHandleFeatures();
         }
         if (isMissingProfilesColumnError(error, 'phone')) {
           disablePhoneFeature();
+        }
+        if (isMissingProfilesColumnError(error, 'profile_type')) {
+          disableProfileTypeFeature();
         }
         payload = buildPayload();
         ({ data, error } = await upsertWithPayload(payload));
@@ -931,12 +953,21 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
           payload = buildPayload();
           ({ data, error } = await upsertWithPayload(payload));
 
-          if (error && (isMissingProfilesColumnError(error, 'handle') || isMissingProfilesColumnError(error, 'phone'))) {
+          if (
+            error && (
+              isMissingProfilesColumnError(error, 'handle') ||
+              isMissingProfilesColumnError(error, 'phone') ||
+              isMissingProfilesColumnError(error, 'profile_type')
+            )
+          ) {
             if (isMissingProfilesColumnError(error, 'handle')) {
               disableHandleFeatures();
             }
             if (isMissingProfilesColumnError(error, 'phone')) {
               disablePhoneFeature();
+            }
+            if (isMissingProfilesColumnError(error, 'profile_type')) {
+              disableProfileTypeFeature();
             }
             payload = buildPayload();
             ({ data, error } = await upsertWithPayload(payload));
@@ -962,6 +993,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         name: data.name,
         handle: isValidHandle(data.handle || '') ? data.handle : selectedHandle,
         email: data.email,
+        profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
         phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -993,6 +1025,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     [
       disableHandleFeatures,
       disablePhoneFeature,
+      disableProfileTypeFeature,
       fetchWeightHistory,
       reserveUniqueHandle,
       reserveUniqueHandleClientSide,
@@ -1041,6 +1074,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         if (!backendCapabilitiesRef.current.phoneColumnAvailable) {
           delete payload.phone;
         }
+        if (!backendCapabilitiesRef.current.profileTypeColumnAvailable) {
+          delete payload.profile_type;
+        }
 
         return payload;
       };
@@ -1056,13 +1092,22 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       let payload = buildPayload();
       let { data, error } = await updateWithPayload(payload);
 
-      if (error && (isMissingProfilesColumnError(error, 'handle') || isMissingProfilesColumnError(error, 'phone'))) {
+      if (
+        error && (
+          isMissingProfilesColumnError(error, 'handle') ||
+          isMissingProfilesColumnError(error, 'phone') ||
+          isMissingProfilesColumnError(error, 'profile_type')
+        )
+      ) {
         if (isMissingProfilesColumnError(error, 'handle')) {
           disableHandleFeatures();
           nextHandle = undefined;
         }
         if (isMissingProfilesColumnError(error, 'phone')) {
           disablePhoneFeature();
+        }
+        if (isMissingProfilesColumnError(error, 'profile_type')) {
+          disableProfileTypeFeature();
         }
 
         payload = buildPayload();
@@ -1079,6 +1124,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         name: data.name,
         handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
+        profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
         phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -1097,7 +1143,14 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       setProfile(mappedProfile);
       return { data: mappedProfile, error: null };
     },
-    [checkHandleAvailability, disableHandleFeatures, disablePhoneFeature, profile?.handle, user]
+    [
+      checkHandleAvailability,
+      disableHandleFeatures,
+      disablePhoneFeature,
+      disableProfileTypeFeature,
+      profile?.handle,
+      user,
+    ]
   );
 
   const addWeightEntry = useCallback(

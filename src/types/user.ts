@@ -4,11 +4,35 @@ export interface User {
   name: string;
 }
 
+export type ProfileType = 'client' | 'personal_trainer' | 'nutritionist';
+
+export const PROFILE_TYPES: Array<{ id: ProfileType; label: string; description: string }> = [
+  {
+    id: 'client',
+    label: 'Cliente',
+    description: 'Acompanha treinos e dietas recebidas',
+  },
+  {
+    id: 'personal_trainer',
+    label: 'Personal Trainer',
+    description: 'Cria e gerencia treinos e dietas para clientes',
+  },
+  {
+    id: 'nutritionist',
+    label: 'Nutricionista',
+    description: 'Cria e gerencia treinos e dietas para clientes',
+  },
+];
+
+export const isProfileType = (value: unknown): value is ProfileType =>
+  value === 'client' || value === 'personal_trainer' || value === 'nutritionist';
+
 export interface UserProfile {
   id: string;
   name: string;
   handle: string;
   email: string;
+  profile_type: ProfileType;
   phone?: string;
   birthdate: string; // ISO date string
   age: number;

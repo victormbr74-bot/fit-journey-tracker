@@ -1,20 +1,13 @@
-import { DietPlanView } from '@/components/diet/DietPlanView';
-import { AssignedDietPlanView } from '@/components/diet/AssignedDietPlanView';
+import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { ProfessionalWorkspace } from '@/components/professional/ProfessionalWorkspace';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
-import { useAssignedPlans } from '@/hooks/useAssignedPlans';
-import { useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
 
-const DietPage = () => {
+const ClientsPage = () => {
   const { user, loading: authLoading } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const {
-    isProfessionalAccount,
-    assignedDietPlan,
-    loadingDietPlan,
-  } = useAssignedPlans();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -23,9 +16,9 @@ const DietPage = () => {
     } else if (!authLoading && !profileLoading && user && !profile) {
       navigate('/onboarding');
     }
-  }, [user, profile, authLoading, profileLoading, navigate]);
+  }, [authLoading, navigate, profile, profileLoading, user]);
 
-  if (authLoading || profileLoading || (!isProfessionalAccount && loadingDietPlan)) {
+  if (authLoading || profileLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
@@ -35,19 +28,11 @@ const DietPage = () => {
 
   if (!user || !profile) return null;
 
-  if (!isProfessionalAccount && assignedDietPlan) {
-    return (
-      <AppLayout>
-        <AssignedDietPlanView assignment={assignedDietPlan} />
-      </AppLayout>
-    );
-  }
-
   return (
     <AppLayout>
-      <DietPlanView />
+      <ProfessionalWorkspace />
     </AppLayout>
   );
 };
 
-export default DietPage;
+export default ClientsPage;

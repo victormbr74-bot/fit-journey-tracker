@@ -10,28 +10,39 @@ import {
 } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { User as SupabaseUser } from '@supabase/supabase-js';
+import { isProfileType, ProfileType } from '@/types/user';
 
 export type User = {
   id: string;
   email: string;
   name: string;
   phone?: string;
+  profileType: ProfileType;
 };
 
 const mapUser = (supaUser: SupabaseUser | null): User | null => {
   if (!supaUser) return null;
+  const metadataProfileType = supaUser.user_metadata?.profile_type;
+  const profileType = isProfileType(metadataProfileType) ? metadataProfileType : 'client';
   return {
     id: supaUser.id,
     email: supaUser.email || '',
     name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'Usuario',
     phone: supaUser.phone || supaUser.user_metadata?.phone || '',
+    profileType,
   };
 };
 
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
-  signUp: (email: string, password: string, name: string, phone?: string) => Promise<{ data: User | null; error: Error | null }>;
+  signUp: (
+    email: string,
+    password: string,
+    name: string,
+    phone?: string,
+    profileType?: ProfileType
+  ) => Promise<{ data: User | null; error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ data: User | null; error: Error | null }>;
   signOut: () => Promise<{ error: Error | null }>;
 };
@@ -105,13 +116,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const signUp = useCallback(
-    async (email: string, password: string, name: string, phone?: string) => {
+    async (
+      email: string,
+      password: string,
+      name: string,
+      phone?: string,
+      profileType: ProfileType = 'client'
+    ) => {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
           emailRedirectTo: window.location.origin,
-          data: { name, phone: phone || null },
+          data: { name, phone: phone || null, profile_type: profileType },
         },
       });
 

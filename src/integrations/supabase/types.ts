@@ -89,6 +89,78 @@ export type Database = {
         }
         Relationships: []
       }
+      client_diet_plans: {
+        Row: {
+          client_id: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          plan_data: Json
+          professional_id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          plan_data?: Json
+          professional_id: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          plan_data?: Json
+          professional_id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      client_workout_plans: {
+        Row: {
+          client_id: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          plan_data: Json
+          professional_id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          plan_data?: Json
+          professional_id: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          plan_data?: Json
+          professional_id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           age: number | null
@@ -102,6 +174,7 @@ export type Database = {
           muscle_groups: string[] | null
           name: string
           phone: string | null
+          profile_type: string
           points: number | null
           spotify_playlist: string | null
           training_frequency: number | null
@@ -121,6 +194,7 @@ export type Database = {
           muscle_groups?: string[] | null
           name: string
           phone?: string | null
+          profile_type?: string
           points?: number | null
           spotify_playlist?: string | null
           training_frequency?: number | null
@@ -140,6 +214,7 @@ export type Database = {
           muscle_groups?: string[] | null
           name?: string
           phone?: string | null
+          profile_type?: string
           points?: number | null
           spotify_playlist?: string | null
           training_frequency?: number | null
@@ -212,6 +287,33 @@ export type Database = {
           recorded_at?: string | null
           route?: Json | null
           user_id?: string
+        }
+        Relationships: []
+      }
+      professional_client_links: {
+        Row: {
+          client_id: string
+          created_at: string
+          id: string
+          professional_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          id?: string
+          professional_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          id?: string
+          professional_id?: string
+          status?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -295,16 +397,43 @@ export type Database = {
           profile_id: string
         }[]
       }
+      has_professional_client_link: {
+        Args: { professional_uuid: string; client_uuid: string }
+        Returns: boolean
+      }
+      is_professional: {
+        Args: { target_profile_id?: string | null }
+        Returns: boolean
+      }
       is_own_profile: { Args: { profile_id: string }; Returns: boolean }
       is_profile_handle_available: {
         Args: { handle_input: string; exclude_profile_id?: string | null }
         Returns: boolean
+      }
+      link_client_by_handle: {
+        Args: { client_handle_input: string }
+        Returns: {
+          client_handle: string
+          client_id: string
+          client_name: string
+          link_id: string
+        }[]
       }
       normalize_profile_handle: { Args: { input_text: string }; Returns: string }
       normalize_profile_phone: { Args: { input_text: string }; Returns: string }
       reserve_unique_profile_handle: {
         Args: { seed_input: string; exclude_profile_id?: string | null }
         Returns: string
+      }
+      search_client_profiles: {
+        Args: { query_text: string; limit_count?: number | null }
+        Returns: {
+          already_linked: boolean
+          goal: string | null
+          handle: string
+          name: string
+          profile_id: string
+        }[]
       }
       search_profiles_by_handle: {
         Args: {

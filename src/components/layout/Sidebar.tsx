@@ -13,6 +13,7 @@ import {
   SquarePlay,
   Trophy,
   User,
+  UsersRound,
   Utensils,
 } from 'lucide-react';
 
@@ -41,11 +42,7 @@ const secondaryNavItems = [
   { path: '/assistant', label: 'Personal', icon: Bot },
 ];
 
-const allNavItems = [
-  ...primaryNavItems,
-  ...secondaryNavItems,
-  { path: '/profile', label: 'Perfil', icon: User },
-];
+const professionalNavItem = { path: '/clients', label: 'Clientes', icon: UsersRound };
 
 const isMissingSocialGlobalStateError = (
   error: { code?: string; message?: string; details?: string } | null | undefined
@@ -81,6 +78,20 @@ export function Sidebar() {
   const userEmail = useMemo(
     () => profile?.email || user?.email || 'sem-email',
     [profile?.email, user?.email]
+  );
+  const isProfessionalAccount = useMemo(
+    () =>
+      profile?.profile_type === 'personal_trainer' ||
+      profile?.profile_type === 'nutritionist',
+    [profile?.profile_type]
+  );
+  const visibleSecondaryNavItems = useMemo(
+    () => (isProfessionalAccount ? [professionalNavItem, ...secondaryNavItems] : secondaryNavItems),
+    [isProfessionalAccount]
+  );
+  const allNavItems = useMemo(
+    () => [...primaryNavItems, ...visibleSecondaryNavItems, { path: '/profile', label: 'Perfil', icon: User }],
+    [visibleSecondaryNavItems]
   );
 
   const refreshUnreadCount = useCallback(async () => {
@@ -213,7 +224,7 @@ export function Sidebar() {
 
           <div className="my-2 h-px bg-border/70" />
 
-          {secondaryNavItems.map((item) => {
+          {visibleSecondaryNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
             return (
