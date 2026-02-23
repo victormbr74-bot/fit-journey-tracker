@@ -15,12 +15,12 @@ export const PROFILE_TYPES: Array<{ id: ProfileType; label: string; description:
   {
     id: 'personal_trainer',
     label: 'Personal Trainer',
-    description: 'Cria e gerencia treinos e dietas para clientes',
+    description: 'Cria e gerencia treinos personalizados para clientes',
   },
   {
     id: 'nutritionist',
     label: 'Nutricionista',
-    description: 'Cria e gerencia treinos e dietas para clientes',
+    description: 'Cria e gerencia dietas personalizadas para clientes',
   },
 ];
 
@@ -33,6 +33,8 @@ export interface UserProfile {
   handle: string;
   email: string;
   profile_type: ProfileType;
+  has_personal_package: boolean;
+  has_nutritionist_package: boolean;
   phone?: string;
   birthdate: string; // ISO date string
   age: number;

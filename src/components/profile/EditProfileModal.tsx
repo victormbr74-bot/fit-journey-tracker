@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useProfile } from '@/hooks/useProfile';
+import { Switch } from '@/components/ui/switch';
 import { GOALS, MUSCLE_GROUPS, Goal } from '@/types/user';
 import { Edit, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,26 +21,33 @@ export function EditProfileModal() {
 
   const [name, setName] = useState(profile?.name || '');
   const [handle, setHandle] = useState(profile?.handle || '');
+  const [phone, setPhone] = useState(profile?.phone || '');
   const [birthdate, setBirthdate] = useState(profile?.birthdate || '');
   const [weight, setWeight] = useState(profile?.weight?.toString() || '');
   const [height, setHeight] = useState(profile?.height?.toString() || '');
   const [goal, setGoal] = useState<Goal['id'] | null>(profile?.goal || null);
   const [selectedMuscles, setSelectedMuscles] = useState<string[]>(profile?.muscle_groups || []);
   const [frequency, setFrequency] = useState(profile?.training_frequency || 3);
+  const [hasPersonalPackage, setHasPersonalPackage] = useState(Boolean(profile?.has_personal_package));
+  const [hasNutritionistPackage, setHasNutritionistPackage] = useState(Boolean(profile?.has_nutritionist_package));
   const [handleState, setHandleState] = useState<HandleState>('idle');
   const [handleHint, setHandleHint] = useState('');
+  const isClientAccount = profile?.profile_type === 'client';
 
   const handleOpenChange = (isOpen: boolean) => {
     setOpen(isOpen);
     if (isOpen && profile) {
       setName(profile.name);
       setHandle(profile.handle || '');
+      setPhone(profile.phone || '');
       setBirthdate(profile.birthdate || '');
       setWeight(profile.weight?.toString() || '');
       setHeight(profile.height?.toString() || '');
       setGoal(profile.goal);
       setSelectedMuscles(profile.muscle_groups || []);
       setFrequency(profile.training_frequency || 3);
+      setHasPersonalPackage(Boolean(profile.has_personal_package));
+      setHasNutritionistPackage(Boolean(profile.has_nutritionist_package));
       setHandleState('idle');
       setHandleHint('');
     }
@@ -110,32 +118,46 @@ export function EditProfileModal() {
       return;
     }
 
-    if (!birthdate) {
-      toast.error('Data de nascimento e obrigatoria');
+    const normalizedPhone = phone.trim();
+    if (normalizedPhone && !/^[0-9()+\-\s]{8,20}$/.test(normalizedPhone)) {
+      toast.error('Celular invalido');
       return;
     }
 
-    const parsedWeight = parseFloat(weight);
-    const parsedHeight = parseFloat(height);
+    let parsedWeight = profile?.weight || 0;
+    let parsedHeight = profile?.height || 0;
+    let age = profile?.age || 0;
 
-    if (isNaN(parsedWeight) || parsedWeight <= 0) {
-      toast.error('Peso invalido');
-      return;
-    }
+    if (isClientAccount) {
+      if (!birthdate) {
+        toast.error('Data de nascimento e obrigatoria');
+        return;
+      }
 
-    if (isNaN(parsedHeight) || parsedHeight <= 0) {
-      toast.error('Altura invalida');
-      return;
-    }
+      parsedWeight = parseFloat(weight);
+      parsedHeight = parseFloat(height);
 
-    if (!goal) {
-      toast.error('Selecione um objetivo');
-      return;
-    }
+      if (isNaN(parsedWeight) || parsedWeight <= 0) {
+        toast.error('Peso invalido');
+        return;
+      }
 
-    if (selectedMuscles.length === 0) {
-      toast.error('Selecione pelo menos um grupo muscular');
-      return;
+      if (isNaN(parsedHeight) || parsedHeight <= 0) {
+        toast.error('Altura invalida');
+        return;
+      }
+
+      if (!goal) {
+        toast.error('Selecione um objetivo');
+        return;
+      }
+
+      if (selectedMuscles.length === 0) {
+        toast.error('Selecione pelo menos um grupo muscular');
+        return;
+      }
+
+      age = calculateAge(birthdate);
     }
 
     const normalizedHandle = toHandle(handle || profile?.handle || name);
@@ -158,18 +180,23 @@ export function EditProfileModal() {
 
     setLoading(true);
 
-    const age = calculateAge(birthdate);
-
     const { error } = await updateProfile({
       name: name.trim(),
       handle: normalizedHandle,
-      birthdate,
-      age,
-      weight: parsedWeight,
-      height: parsedHeight,
-      goal,
-      muscle_groups: selectedMuscles,
-      training_frequency: frequency,
+      phone: normalizedPhone,
+      ...(isClientAccount
+        ? {
+            birthdate,
+            age,
+            weight: parsedWeight,
+            height: parsedHeight,
+            goal: goal || 'maintain',
+            muscle_groups: selectedMuscles,
+            training_frequency: frequency,
+            has_personal_package: hasPersonalPackage,
+            has_nutritionist_package: hasNutritionistPackage,
+          }
+        : {}),
     });
 
     setLoading(false);
@@ -237,107 +264,156 @@ export function EditProfileModal() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="birthdate">Data de Nascimento</Label>
+            <Label htmlFor="phone">Celular</Label>
             <Input
-              id="birthdate"
-              type="date"
-              value={birthdate}
-              onChange={(event) => setBirthdate(event.target.value)}
-              max={new Date().toISOString().split('T')[0]}
+              id="phone"
+              type="tel"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              placeholder="(11) 99999-9999"
+              autoComplete="tel"
             />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="weight">Peso (kg)</Label>
-            <Input
-              id="weight"
-              type="number"
-              value={weight}
-              onChange={(event) => setWeight(event.target.value)}
-              placeholder="Seu peso"
-              min="1"
-              step="0.1"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="height">Altura (cm)</Label>
-            <Input
-              id="height"
-              type="number"
-              value={height}
-              onChange={(event) => setHeight(event.target.value)}
-              placeholder="Sua altura"
-              min="1"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Objetivo</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {GOALS.map((currentGoal) => (
-                <button
-                  key={currentGoal.id}
-                  type="button"
-                  onClick={() => setGoal(currentGoal.id)}
-                  className={`p-3 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-1 ${
-                    goal === currentGoal.id
-                      ? 'border-primary bg-primary/10'
-                      : 'border-border bg-secondary/30 hover:border-primary/50'
-                  }`}
-                >
-                  <span className="text-2xl">{currentGoal.icon}</span>
-                  <span className="font-medium text-xs">{currentGoal.label}</span>
-                  {goal === currentGoal.id && <Check className="w-4 h-4 text-primary" />}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Grupos Musculares</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {MUSCLE_GROUPS.map((muscle) => (
-                <button
-                  key={muscle.id}
-                  type="button"
-                  onClick={() => toggleMuscle(muscle.id)}
-                  className={`p-3 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-1 ${
-                    selectedMuscles.includes(muscle.id)
-                      ? 'border-primary bg-primary/10'
-                      : 'border-border bg-secondary/30 hover:border-primary/50'
-                  }`}
-                >
-                  <span className="text-xl">{muscle.icon}</span>
-                  <span className="font-medium text-xs">{muscle.label}</span>
-                  {selectedMuscles.includes(muscle.id) && <Check className="w-4 h-4 text-primary" />}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Frequencia Semanal</Label>
-            <div className="grid grid-cols-7 gap-1">
-              {[1, 2, 3, 4, 5, 6, 7].map((day) => (
-                <button
-                  key={day}
-                  type="button"
-                  onClick={() => setFrequency(day)}
-                  className={`p-2 rounded-lg border-2 transition-all duration-300 flex flex-col items-center ${
-                    frequency === day
-                      ? 'border-primary bg-primary/10'
-                      : 'border-border bg-secondary/30 hover:border-primary/50'
-                  }`}
-                >
-                  <span className="text-sm font-bold">{day}</span>
-                </button>
-              ))}
-            </div>
-            <p className="text-center text-sm text-muted-foreground">
-              {frequency} {frequency === 1 ? 'dia' : 'dias'} por semana
+            <p className="text-xs text-muted-foreground">
+              Opcional. Use apenas numeros e sinais comuns.
             </p>
           </div>
+
+          {isClientAccount && (
+            <>
+              <div className="space-y-3 rounded-lg border border-border/70 p-4">
+                <div>
+                  <Label className="text-sm">Pacotes Profissionais</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Ative para liberar planos personalizados com personal ou nutricionista.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">Pacote com personal</p>
+                    <p className="text-xs text-muted-foreground">
+                      Libera recebimento de treino personalizado.
+                    </p>
+                  </div>
+                  <Switch checked={hasPersonalPackage} onCheckedChange={setHasPersonalPackage} />
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">Pacote com nutricionista</p>
+                    <p className="text-xs text-muted-foreground">
+                      Libera recebimento de dieta personalizada.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={hasNutritionistPackage}
+                    onCheckedChange={setHasNutritionistPackage}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="birthdate">Data de Nascimento</Label>
+                <Input
+                  id="birthdate"
+                  type="date"
+                  value={birthdate}
+                  onChange={(event) => setBirthdate(event.target.value)}
+                  max={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="weight">Peso (kg)</Label>
+                <Input
+                  id="weight"
+                  type="number"
+                  value={weight}
+                  onChange={(event) => setWeight(event.target.value)}
+                  placeholder="Seu peso"
+                  min="1"
+                  step="0.1"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="height">Altura (cm)</Label>
+                <Input
+                  id="height"
+                  type="number"
+                  value={height}
+                  onChange={(event) => setHeight(event.target.value)}
+                  placeholder="Sua altura"
+                  min="1"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Objetivo</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {GOALS.map((currentGoal) => (
+                    <button
+                      key={currentGoal.id}
+                      type="button"
+                      onClick={() => setGoal(currentGoal.id)}
+                      className={`p-3 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-1 ${
+                        goal === currentGoal.id
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border bg-secondary/30 hover:border-primary/50'
+                      }`}
+                    >
+                      <span className="text-2xl">{currentGoal.icon}</span>
+                      <span className="font-medium text-xs">{currentGoal.label}</span>
+                      {goal === currentGoal.id && <Check className="w-4 h-4 text-primary" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Grupos Musculares</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {MUSCLE_GROUPS.map((muscle) => (
+                    <button
+                      key={muscle.id}
+                      type="button"
+                      onClick={() => toggleMuscle(muscle.id)}
+                      className={`p-3 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-1 ${
+                        selectedMuscles.includes(muscle.id)
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border bg-secondary/30 hover:border-primary/50'
+                      }`}
+                    >
+                      <span className="text-xl">{muscle.icon}</span>
+                      <span className="font-medium text-xs">{muscle.label}</span>
+                      {selectedMuscles.includes(muscle.id) && <Check className="w-4 h-4 text-primary" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Frequencia Semanal</Label>
+                <div className="grid grid-cols-7 gap-1">
+                  {[1, 2, 3, 4, 5, 6, 7].map((day) => (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => setFrequency(day)}
+                      className={`p-2 rounded-lg border-2 transition-all duration-300 flex flex-col items-center ${
+                        frequency === day
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border bg-secondary/30 hover:border-primary/50'
+                      }`}
+                    >
+                      <span className="text-sm font-bold">{day}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-center text-sm text-muted-foreground">
+                  {frequency} {frequency === 1 ? 'dia' : 'dias'} por semana
+                </p>
+              </div>
+            </>
+          )}
 
           <div className="flex gap-3 pt-4">
             <Button

@@ -675,6 +675,22 @@ export function ProfilePage() {
                     <Trophy className="h-4 w-4 text-primary" />
                     <span className="font-medium">{profile.points} pontos</span>
                   </div>
+                  {profile.profile_type === 'client' && (
+                    <>
+                      <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-sm">
+                        <Dumbbell className="h-4 w-4 text-primary" />
+                        <span className="font-medium">
+                          Personal {profile.has_personal_package ? 'ativo' : 'inativo'}
+                        </span>
+                      </div>
+                      <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-sm">
+                        <Lock className="h-4 w-4 text-primary" />
+                        <span className="font-medium">
+                          Nutri {profile.has_nutritionist_package ? 'ativo' : 'inativo'}
+                        </span>
+                      </div>
+                    </>
+                  )}
                   <EditProfileModal />
                 </div>
                 <Button

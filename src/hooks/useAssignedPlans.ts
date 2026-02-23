@@ -79,8 +79,11 @@ export function useAssignedPlans() {
     [profile?.profile_type]
   );
 
+  const hasPersonalPackage = Boolean(profile?.has_personal_package);
+  const hasNutritionistPackage = Boolean(profile?.has_nutritionist_package);
+
   const loadAssignedWorkoutPlan = useCallback(async () => {
-    if (!profile?.id || isProfessionalAccount) {
+    if (!profile?.id || isProfessionalAccount || !hasPersonalPackage) {
       setAssignedWorkoutPlan(null);
       setLoadingWorkoutPlan(false);
       return;
@@ -120,10 +123,10 @@ export function useAssignedPlans() {
       updatedAt: data.updated_at,
     });
     setLoadingWorkoutPlan(false);
-  }, [isProfessionalAccount, profile?.id]);
+  }, [hasPersonalPackage, isProfessionalAccount, profile?.id]);
 
   const loadAssignedDietPlan = useCallback(async () => {
-    if (!profile?.id || isProfessionalAccount) {
+    if (!profile?.id || isProfessionalAccount || !hasNutritionistPackage) {
       setAssignedDietPlan(null);
       setLoadingDietPlan(false);
       return;
@@ -163,7 +166,7 @@ export function useAssignedPlans() {
       updatedAt: data.updated_at,
     });
     setLoadingDietPlan(false);
-  }, [isProfessionalAccount, profile?.id]);
+  }, [hasNutritionistPackage, isProfessionalAccount, profile?.id]);
 
   useEffect(() => {
     void loadAssignedWorkoutPlan();
@@ -175,6 +178,8 @@ export function useAssignedPlans() {
 
   return {
     isProfessionalAccount,
+    hasPersonalPackage,
+    hasNutritionistPackage,
     assignedWorkoutPlan,
     assignedDietPlan,
     loadingWorkoutPlan,

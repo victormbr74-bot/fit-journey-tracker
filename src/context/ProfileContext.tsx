@@ -139,6 +139,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     handleColumnAvailable: true,
     phoneColumnAvailable: true,
     profileTypeColumnAvailable: true,
+    personalPackageColumnAvailable: true,
+    nutritionistPackageColumnAvailable: true,
     reserveHandleRpcAvailable: true,
     handleAvailabilityRpcAvailable: true,
     handleSearchRpcAvailable: true,
@@ -218,6 +220,16 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const disableProfileTypeFeature = useCallback(() => {
     backendCapabilitiesRef.current.profileTypeColumnAvailable = false;
+    persistCapabilities();
+  }, [persistCapabilities]);
+
+  const disablePersonalPackageFeature = useCallback(() => {
+    backendCapabilitiesRef.current.personalPackageColumnAvailable = false;
+    persistCapabilities();
+  }, [persistCapabilities]);
+
+  const disableNutritionistPackageFeature = useCallback(() => {
+    backendCapabilitiesRef.current.nutritionistPackageColumnAvailable = false;
     persistCapabilities();
   }, [persistCapabilities]);
 
@@ -440,6 +452,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
         profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
+        has_personal_package: Boolean(data.has_personal_package),
+        has_nutritionist_package: Boolean(data.has_nutritionist_package),
         phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -906,6 +920,12 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
             ? profileData.profile_type
             : user.profileType || 'client';
         }
+        if (backendCapabilitiesRef.current.personalPackageColumnAvailable) {
+          payload.has_personal_package = Boolean(profileData.has_personal_package);
+        }
+        if (backendCapabilitiesRef.current.nutritionistPackageColumnAvailable) {
+          payload.has_nutritionist_package = Boolean(profileData.has_nutritionist_package);
+        }
 
         return payload;
       };
@@ -924,7 +944,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         error && (
           isMissingProfilesColumnError(error, 'handle') ||
           isMissingProfilesColumnError(error, 'phone') ||
-          isMissingProfilesColumnError(error, 'profile_type')
+          isMissingProfilesColumnError(error, 'profile_type') ||
+          isMissingProfilesColumnError(error, 'has_personal_package') ||
+          isMissingProfilesColumnError(error, 'has_nutritionist_package')
         )
       ) {
         if (isMissingProfilesColumnError(error, 'handle')) {
@@ -935,6 +957,12 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         }
         if (isMissingProfilesColumnError(error, 'profile_type')) {
           disableProfileTypeFeature();
+        }
+        if (isMissingProfilesColumnError(error, 'has_personal_package')) {
+          disablePersonalPackageFeature();
+        }
+        if (isMissingProfilesColumnError(error, 'has_nutritionist_package')) {
+          disableNutritionistPackageFeature();
         }
         payload = buildPayload();
         ({ data, error } = await upsertWithPayload(payload));
@@ -957,7 +985,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
             error && (
               isMissingProfilesColumnError(error, 'handle') ||
               isMissingProfilesColumnError(error, 'phone') ||
-              isMissingProfilesColumnError(error, 'profile_type')
+              isMissingProfilesColumnError(error, 'profile_type') ||
+              isMissingProfilesColumnError(error, 'has_personal_package') ||
+              isMissingProfilesColumnError(error, 'has_nutritionist_package')
             )
           ) {
             if (isMissingProfilesColumnError(error, 'handle')) {
@@ -968,6 +998,12 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
             }
             if (isMissingProfilesColumnError(error, 'profile_type')) {
               disableProfileTypeFeature();
+            }
+            if (isMissingProfilesColumnError(error, 'has_personal_package')) {
+              disablePersonalPackageFeature();
+            }
+            if (isMissingProfilesColumnError(error, 'has_nutritionist_package')) {
+              disableNutritionistPackageFeature();
             }
             payload = buildPayload();
             ({ data, error } = await upsertWithPayload(payload));
@@ -994,6 +1030,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         handle: isValidHandle(data.handle || '') ? data.handle : selectedHandle,
         email: data.email,
         profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
+        has_personal_package: Boolean(data.has_personal_package),
+        has_nutritionist_package: Boolean(data.has_nutritionist_package),
         phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -1026,6 +1064,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       disableHandleFeatures,
       disablePhoneFeature,
       disableProfileTypeFeature,
+      disablePersonalPackageFeature,
+      disableNutritionistPackageFeature,
       fetchWeightHistory,
       reserveUniqueHandle,
       reserveUniqueHandleClientSide,
@@ -1077,6 +1117,12 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         if (!backendCapabilitiesRef.current.profileTypeColumnAvailable) {
           delete payload.profile_type;
         }
+        if (!backendCapabilitiesRef.current.personalPackageColumnAvailable) {
+          delete payload.has_personal_package;
+        }
+        if (!backendCapabilitiesRef.current.nutritionistPackageColumnAvailable) {
+          delete payload.has_nutritionist_package;
+        }
 
         return payload;
       };
@@ -1096,7 +1142,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         error && (
           isMissingProfilesColumnError(error, 'handle') ||
           isMissingProfilesColumnError(error, 'phone') ||
-          isMissingProfilesColumnError(error, 'profile_type')
+          isMissingProfilesColumnError(error, 'profile_type') ||
+          isMissingProfilesColumnError(error, 'has_personal_package') ||
+          isMissingProfilesColumnError(error, 'has_nutritionist_package')
         )
       ) {
         if (isMissingProfilesColumnError(error, 'handle')) {
@@ -1108,6 +1156,12 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         }
         if (isMissingProfilesColumnError(error, 'profile_type')) {
           disableProfileTypeFeature();
+        }
+        if (isMissingProfilesColumnError(error, 'has_personal_package')) {
+          disablePersonalPackageFeature();
+        }
+        if (isMissingProfilesColumnError(error, 'has_nutritionist_package')) {
+          disableNutritionistPackageFeature();
         }
 
         payload = buildPayload();
@@ -1125,6 +1179,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
         profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
+        has_personal_package: Boolean(data.has_personal_package),
+        has_nutritionist_package: Boolean(data.has_nutritionist_package),
         phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -1148,6 +1204,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       disableHandleFeatures,
       disablePhoneFeature,
       disableProfileTypeFeature,
+      disablePersonalPackageFeature,
+      disableNutritionistPackageFeature,
       profile?.handle,
       user,
     ]

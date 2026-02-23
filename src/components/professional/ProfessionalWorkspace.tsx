@@ -31,6 +31,8 @@ type ManagedClient = {
   weight: number;
   height: number;
   age: number;
+  hasPersonalPackage: boolean;
+  hasNutritionistPackage: boolean;
 };
 
 const resolveGoal = (value: string | null | undefined): Goal['id'] => {
@@ -69,6 +71,8 @@ export function ProfessionalWorkspace() {
       profile?.profile_type === 'nutritionist',
     [profile?.profile_type]
   );
+  const isPersonalTrainer = profile?.profile_type === 'personal_trainer';
+  const isNutritionist = profile?.profile_type === 'nutritionist';
 
   const loadManagedClients = useCallback(async () => {
     if (!profile?.id || !isProfessionalAccount) {
@@ -103,7 +107,7 @@ export function ProfessionalWorkspace() {
     const clientIds = linkRows.map((link) => link.client_id);
     const { data: clientsData, error: clientsError } = await supabase
       .from('profiles')
-      .select('id, name, handle, email, goal, weight, height, age')
+      .select('id, name, handle, email, goal, weight, height, age, has_personal_package, has_nutritionist_package')
       .in('id', clientIds);
 
     if (clientsError) {
@@ -130,6 +134,8 @@ export function ProfessionalWorkspace() {
           weight: Number(client.weight) || 0,
           height: Number(client.height) || 0,
           age: Number(client.age) || 0,
+          hasPersonalPackage: Boolean(client.has_personal_package),
+          hasNutritionistPackage: Boolean(client.has_nutritionist_package),
         };
       })
       .filter((value): value is ManagedClient => Boolean(value));
@@ -212,7 +218,14 @@ export function ProfessionalWorkspace() {
   };
 
   const handlePublishWorkoutPlan = async (client: ManagedClient) => {
-    if (!profile?.id) return;
+    if (!profile?.id || !isPersonalTrainer) {
+      toast.error('Apenas personal trainer pode publicar treino.');
+      return;
+    }
+    if (!client.hasPersonalPackage) {
+      toast.error(`${client.name} ainda nao aderiu ao pacote com personal.`);
+      return;
+    }
 
     setBusyClientAction(`workout:${client.id}`);
     const generatedPlan = generateWorkoutPlan({
@@ -259,7 +272,14 @@ export function ProfessionalWorkspace() {
   };
 
   const handlePublishDietPlan = async (client: ManagedClient) => {
-    if (!profile?.id) return;
+    if (!profile?.id || !isNutritionist) {
+      toast.error('Apenas nutricionista pode publicar dieta.');
+      return;
+    }
+    if (!client.hasNutritionistPackage) {
+      toast.error(`${client.name} ainda nao aderiu ao pacote com nutricionista.`);
+      return;
+    }
 
     setBusyClientAction(`diet:${client.id}`);
     const generatedPlan = generateDietPlan({
@@ -335,8 +355,14 @@ export function ProfessionalWorkspace() {
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-1">
-          <p>Busque clientes, vincule e publique treino/dieta personalizados.</p>
-          <p>Apenas clientes vinculados recebem e visualizam os planos.</p>
+          <p>
+            {isPersonalTrainer
+              ? 'Busque clientes, vincule e publique treinos personalizados.'
+              : 'Busque clientes, vincule e publique dietas personalizadas.'}
+          </p>
+          <p>
+            Apenas clientes vinculados e com pacote ativo conseguem receber os planos.
+          </p>
         </CardContent>
       </Card>
 
@@ -425,6 +451,8 @@ export function ProfessionalWorkspace() {
             const unlinkBusy = busyClientAction === `unlink:${client.id}`;
             const workoutBusy = busyClientAction === `workout:${client.id}`;
             const dietBusy = busyClientAction === `diet:${client.id}`;
+            const workoutLockedByPackage = !client.hasPersonalPackage;
+            const dietLockedByPackage = !client.hasNutritionistPackage;
 
             return (
               <Card key={client.id} className="glass-card">
@@ -439,29 +467,47 @@ export function ProfessionalWorkspace() {
                     <Badge variant="outline">{client.handle}</Badge>
                     <Badge variant="outline">{client.email}</Badge>
                     <Badge variant="outline">Meta: {getGoalLabel(resolveGoal(client.goal))}</Badge>
+                    <Badge variant={client.hasPersonalPackage ? 'default' : 'outline'}>
+                      Personal: {client.hasPersonalPackage ? 'ativo' : 'inativo'}
+                    </Badge>
+                    <Badge variant={client.hasNutritionistPackage ? 'default' : 'outline'}>
+                      Nutri: {client.hasNutritionistPackage ? 'ativo' : 'inativo'}
+                    </Badge>
                     <Badge variant="outline">
                       Vinculado em {formatDateTime(client.linkedAt)}
                     </Badge>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="energy"
-                      size="sm"
-                      onClick={() => handlePublishWorkoutPlan(client)}
-                      disabled={workoutBusy || dietBusy || unlinkBusy}
-                    >
-                      {workoutBusy ? 'Publicando treino...' : 'Publicar treino'}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="energy"
-                      size="sm"
-                      onClick={() => handlePublishDietPlan(client)}
-                      disabled={workoutBusy || dietBusy || unlinkBusy}
-                    >
-                      {dietBusy ? 'Publicando dieta...' : 'Publicar dieta'}
-                    </Button>
+                    {isPersonalTrainer && (
+                      <Button
+                        type="button"
+                        variant={workoutLockedByPackage ? 'outline' : 'energy'}
+                        size="sm"
+                        onClick={() => handlePublishWorkoutPlan(client)}
+                        disabled={workoutLockedByPackage || workoutBusy || dietBusy || unlinkBusy}
+                      >
+                        {workoutBusy
+                          ? 'Publicando treino...'
+                          : workoutLockedByPackage
+                            ? 'Pacote personal inativo'
+                            : 'Publicar treino'}
+                      </Button>
+                    )}
+                    {isNutritionist && (
+                      <Button
+                        type="button"
+                        variant={dietLockedByPackage ? 'outline' : 'energy'}
+                        size="sm"
+                        onClick={() => handlePublishDietPlan(client)}
+                        disabled={dietLockedByPackage || workoutBusy || dietBusy || unlinkBusy}
+                      >
+                        {dietBusy
+                          ? 'Publicando dieta...'
+                          : dietLockedByPackage
+                            ? 'Pacote nutri inativo'
+                            : 'Publicar dieta'}
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
@@ -474,6 +520,13 @@ export function ProfessionalWorkspace() {
                       {unlinkBusy ? 'Desvinculando...' : 'Desvincular'}
                     </Button>
                   </div>
+                  {(isPersonalTrainer && workoutLockedByPackage) || (isNutritionist && dietLockedByPackage) ? (
+                    <p className="text-xs text-muted-foreground">
+                      {isPersonalTrainer
+                        ? 'Solicite ao cliente a adesao ao pacote com personal para liberar o envio de treino.'
+                        : 'Solicite ao cliente a adesao ao pacote com nutricionista para liberar o envio de dieta.'}
+                    </p>
+                  ) : null}
                 </CardContent>
               </Card>
             );

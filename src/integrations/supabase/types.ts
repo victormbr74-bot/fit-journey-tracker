@@ -168,6 +168,8 @@ export type Database = {
           created_at: string | null
           email: string
           goal: string | null
+          has_nutritionist_package: boolean
+          has_personal_package: boolean
           handle: string
           height: number | null
           id: string
@@ -188,6 +190,8 @@ export type Database = {
           created_at?: string | null
           email: string
           goal?: string | null
+          has_nutritionist_package?: boolean
+          has_personal_package?: boolean
           handle: string
           height?: number | null
           id: string
@@ -208,6 +212,8 @@ export type Database = {
           created_at?: string | null
           email?: string
           goal?: string | null
+          has_nutritionist_package?: boolean
+          has_personal_package?: boolean
           handle?: string
           height?: number | null
           id?: string
