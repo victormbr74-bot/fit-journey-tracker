@@ -1135,6 +1135,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
         // Account type is chosen during registration/onboarding and cannot be changed in profile edit.
         delete payload.profile_type;
+        // Package flags are controlled by payment flow/webhooks.
+        delete payload.has_personal_package;
+        delete payload.has_nutritionist_package;
         // Admin flag must never be client-editable.
         delete payload.is_admin;
         // Subscription activation must be controlled by backend/payment flow.

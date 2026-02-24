@@ -1,5 +1,35 @@
 BEGIN;
 
+DO $$
+BEGIN
+  IF to_regclass('public.professional_client_links') IS NULL THEN
+    RAISE EXCEPTION
+      'Dependencia ausente: public.professional_client_links. Execute antes a migration 20260221103000_add_professional_roles_and_client_plans.sql';
+  END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.has_professional_client_link(
+  professional_uuid UUID,
+  client_uuid UUID
+)
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.professional_client_links pcl
+    WHERE pcl.professional_id = professional_uuid
+      AND pcl.client_id = client_uuid
+      AND pcl.status = 'active'
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.has_professional_client_link(UUID, UUID) TO authenticated;
+
 ALTER TABLE public.profiles
 ADD COLUMN IF NOT EXISTS is_admin BOOLEAN;
 
