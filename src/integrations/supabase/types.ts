@@ -177,6 +177,7 @@ export type Database = {
           name: string
           phone: string | null
           profile_type: string
+          professional_subscription_active: boolean
           points: number | null
           spotify_playlist: string | null
           training_frequency: number | null
@@ -199,6 +200,7 @@ export type Database = {
           name: string
           phone?: string | null
           profile_type?: string
+          professional_subscription_active?: boolean
           points?: number | null
           spotify_playlist?: string | null
           training_frequency?: number | null
@@ -221,6 +223,7 @@ export type Database = {
           name?: string
           phone?: string | null
           profile_type?: string
+          professional_subscription_active?: boolean
           points?: number | null
           spotify_playlist?: string | null
           training_frequency?: number | null

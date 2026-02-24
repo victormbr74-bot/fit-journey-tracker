@@ -1,5 +1,39 @@
 BEGIN;
 
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'profiles'
+      AND column_name = 'profile_type'
+  ) THEN
+    RAISE EXCEPTION
+      'Dependencia ausente: public.profiles.profile_type. Execute antes a migration 20260221103000_add_professional_roles_and_client_plans.sql';
+  END IF;
+
+  IF to_regclass('public.professional_client_links') IS NULL
+     OR to_regclass('public.client_workout_plans') IS NULL
+     OR to_regclass('public.client_diet_plans') IS NULL THEN
+    RAISE EXCEPTION
+      'Dependencias ausentes de tabelas profissionais. Execute antes a migration 20260221103000_add_professional_roles_and_client_plans.sql';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = 'has_professional_client_link'
+      AND p.pronargs = 2
+  ) THEN
+    RAISE EXCEPTION
+      'Dependencia ausente: function public.has_professional_client_link(UUID, UUID). Execute antes a migration 20260221103000_add_professional_roles_and_client_plans.sql';
+  END IF;
+END;
+$$;
+
 ALTER TABLE public.profiles
 ADD COLUMN IF NOT EXISTS has_personal_package BOOLEAN;
 

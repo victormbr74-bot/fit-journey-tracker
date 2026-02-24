@@ -71,11 +71,12 @@ export function ProfessionalWorkspace() {
       profile?.profile_type === 'nutritionist',
     [profile?.profile_type]
   );
+  const hasProfessionalSubscription = Boolean(profile?.professional_subscription_active);
   const isPersonalTrainer = profile?.profile_type === 'personal_trainer';
   const isNutritionist = profile?.profile_type === 'nutritionist';
 
   const loadManagedClients = useCallback(async () => {
-    if (!profile?.id || !isProfessionalAccount) {
+    if (!profile?.id || !isProfessionalAccount || !hasProfessionalSubscription) {
       setManagedClients([]);
       setLoadingClients(false);
       return;
@@ -142,14 +143,14 @@ export function ProfessionalWorkspace() {
 
     setManagedClients(mergedClients);
     setLoadingClients(false);
-  }, [isProfessionalAccount, profile?.id]);
+  }, [hasProfessionalSubscription, isProfessionalAccount, profile?.id]);
 
   useEffect(() => {
     void loadManagedClients();
   }, [loadManagedClients]);
 
   const handleSearchClients = async () => {
-    if (!isProfessionalAccount) return;
+    if (!isProfessionalAccount || !hasProfessionalSubscription) return;
 
     setSearching(true);
     const { data, error } = await supabase.rpc('search_client_profiles', {
@@ -169,7 +170,7 @@ export function ProfessionalWorkspace() {
   };
 
   const handleLinkClient = async (clientHandle: string) => {
-    if (!profile?.id || !isProfessionalAccount) return;
+    if (!profile?.id || !isProfessionalAccount || !hasProfessionalSubscription) return;
     setLinkingHandle(clientHandle);
 
     const { error } = await supabase.rpc('link_client_by_handle', {
@@ -339,6 +340,24 @@ export function ProfessionalWorkspace() {
           </p>
           <p>
             Se desejar mudar seu tipo de conta, crie um novo cadastro com perfil profissional.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!hasProfessionalSubscription) {
+    return (
+      <Card className="glass-card border-border/70">
+        <CardHeader>
+          <CardTitle className="text-lg">Mensalidade profissional pendente</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground space-y-2">
+          <p>
+            Seu cadastro profissional foi criado, mas o acesso a clientes so e liberado apos o pagamento da mensalidade.
+          </p>
+          <p>
+            Assim que o pagamento for confirmado, a area profissional sera liberada automaticamente.
           </p>
         </CardContent>
       </Card>

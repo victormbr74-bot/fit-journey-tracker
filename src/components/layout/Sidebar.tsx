@@ -85,9 +85,13 @@ export function Sidebar() {
       profile?.profile_type === 'nutritionist',
     [profile?.profile_type]
   );
+  const hasProfessionalSubscription = Boolean(profile?.professional_subscription_active);
   const visibleSecondaryNavItems = useMemo(
-    () => (isProfessionalAccount ? [professionalNavItem, ...secondaryNavItems] : secondaryNavItems),
-    [isProfessionalAccount]
+    () =>
+      isProfessionalAccount && hasProfessionalSubscription
+        ? [professionalNavItem, ...secondaryNavItems]
+        : secondaryNavItems,
+    [hasProfessionalSubscription, isProfessionalAccount]
   );
   const allNavItems = useMemo(
     () => [...primaryNavItems, ...visibleSecondaryNavItems, { path: '/profile', label: 'Perfil', icon: User }],

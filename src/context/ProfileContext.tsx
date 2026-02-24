@@ -68,10 +68,16 @@ const isMissingProfilesColumnError = (
   columnName: string
 ) => {
   if (!error) return false;
-  if (error.code !== 'PGRST204') return false;
   const normalizedColumn = `'${columnName.toLowerCase()}'`;
   const combinedText = `${error.message || ''} ${error.details || ''}`.toLowerCase();
-  return combinedText.includes(normalizedColumn) && combinedText.includes("'profiles'");
+  const mentionsProfilesColumn =
+    combinedText.includes(normalizedColumn) &&
+    (combinedText.includes("'profiles'") || combinedText.includes(' of profiles '));
+
+  if (error.code === 'PGRST204') return mentionsProfilesColumn;
+
+  // Some deployments can return schema cache errors without the expected code.
+  return mentionsProfilesColumn && combinedText.includes('schema cache');
 };
 
 const isProfilesUserForeignKeyError = (
@@ -141,6 +147,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
     profileTypeColumnAvailable: true,
     personalPackageColumnAvailable: true,
     nutritionistPackageColumnAvailable: true,
+    professionalSubscriptionColumnAvailable: true,
     reserveHandleRpcAvailable: true,
     handleAvailabilityRpcAvailable: true,
     handleSearchRpcAvailable: true,
@@ -230,6 +237,11 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
   const disableNutritionistPackageFeature = useCallback(() => {
     backendCapabilitiesRef.current.nutritionistPackageColumnAvailable = false;
+    persistCapabilities();
+  }, [persistCapabilities]);
+
+  const disableProfessionalSubscriptionFeature = useCallback(() => {
+    backendCapabilitiesRef.current.professionalSubscriptionColumnAvailable = false;
     persistCapabilities();
   }, [persistCapabilities]);
 
@@ -454,6 +466,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
         has_personal_package: Boolean(data.has_personal_package),
         has_nutritionist_package: Boolean(data.has_nutritionist_package),
+        professional_subscription_active: Boolean(data.professional_subscription_active),
         phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -926,6 +939,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         if (backendCapabilitiesRef.current.nutritionistPackageColumnAvailable) {
           payload.has_nutritionist_package = Boolean(profileData.has_nutritionist_package);
         }
+        if (backendCapabilitiesRef.current.professionalSubscriptionColumnAvailable) {
+          payload.professional_subscription_active = Boolean(profileData.professional_subscription_active);
+        }
 
         return payload;
       };
@@ -946,7 +962,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
           isMissingProfilesColumnError(error, 'phone') ||
           isMissingProfilesColumnError(error, 'profile_type') ||
           isMissingProfilesColumnError(error, 'has_personal_package') ||
-          isMissingProfilesColumnError(error, 'has_nutritionist_package')
+          isMissingProfilesColumnError(error, 'has_nutritionist_package') ||
+          isMissingProfilesColumnError(error, 'professional_subscription_active')
         )
       ) {
         if (isMissingProfilesColumnError(error, 'handle')) {
@@ -963,6 +980,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         }
         if (isMissingProfilesColumnError(error, 'has_nutritionist_package')) {
           disableNutritionistPackageFeature();
+        }
+        if (isMissingProfilesColumnError(error, 'professional_subscription_active')) {
+          disableProfessionalSubscriptionFeature();
         }
         payload = buildPayload();
         ({ data, error } = await upsertWithPayload(payload));
@@ -987,7 +1007,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
               isMissingProfilesColumnError(error, 'phone') ||
               isMissingProfilesColumnError(error, 'profile_type') ||
               isMissingProfilesColumnError(error, 'has_personal_package') ||
-              isMissingProfilesColumnError(error, 'has_nutritionist_package')
+              isMissingProfilesColumnError(error, 'has_nutritionist_package') ||
+              isMissingProfilesColumnError(error, 'professional_subscription_active')
             )
           ) {
             if (isMissingProfilesColumnError(error, 'handle')) {
@@ -1004,6 +1025,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
             }
             if (isMissingProfilesColumnError(error, 'has_nutritionist_package')) {
               disableNutritionistPackageFeature();
+            }
+            if (isMissingProfilesColumnError(error, 'professional_subscription_active')) {
+              disableProfessionalSubscriptionFeature();
             }
             payload = buildPayload();
             ({ data, error } = await upsertWithPayload(payload));
@@ -1032,6 +1056,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
         has_personal_package: Boolean(data.has_personal_package),
         has_nutritionist_package: Boolean(data.has_nutritionist_package),
+        professional_subscription_active: Boolean(data.professional_subscription_active),
         phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -1066,6 +1091,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       disableProfileTypeFeature,
       disablePersonalPackageFeature,
       disableNutritionistPackageFeature,
+      disableProfessionalSubscriptionFeature,
       fetchWeightHistory,
       reserveUniqueHandle,
       reserveUniqueHandleClientSide,
@@ -1105,6 +1131,11 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
           updated_at: new Date().toISOString(),
         };
 
+        // Account type is chosen during registration/onboarding and cannot be changed in profile edit.
+        delete payload.profile_type;
+        // Subscription activation must be controlled by backend/payment flow.
+        delete payload.professional_subscription_active;
+
         if (!backendCapabilitiesRef.current.handleColumnAvailable) {
           delete payload.handle;
         } else if (typeof nextHandle === 'string') {
@@ -1122,6 +1153,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         }
         if (!backendCapabilitiesRef.current.nutritionistPackageColumnAvailable) {
           delete payload.has_nutritionist_package;
+        }
+        if (!backendCapabilitiesRef.current.professionalSubscriptionColumnAvailable) {
+          delete payload.professional_subscription_active;
         }
 
         return payload;
@@ -1144,7 +1178,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
           isMissingProfilesColumnError(error, 'phone') ||
           isMissingProfilesColumnError(error, 'profile_type') ||
           isMissingProfilesColumnError(error, 'has_personal_package') ||
-          isMissingProfilesColumnError(error, 'has_nutritionist_package')
+          isMissingProfilesColumnError(error, 'has_nutritionist_package') ||
+          isMissingProfilesColumnError(error, 'professional_subscription_active')
         )
       ) {
         if (isMissingProfilesColumnError(error, 'handle')) {
@@ -1162,6 +1197,9 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         }
         if (isMissingProfilesColumnError(error, 'has_nutritionist_package')) {
           disableNutritionistPackageFeature();
+        }
+        if (isMissingProfilesColumnError(error, 'professional_subscription_active')) {
+          disableProfessionalSubscriptionFeature();
         }
 
         payload = buildPayload();
@@ -1181,6 +1219,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
         has_personal_package: Boolean(data.has_personal_package),
         has_nutritionist_package: Boolean(data.has_nutritionist_package),
+        professional_subscription_active: Boolean(data.professional_subscription_active),
         phone: data.phone || '',
         birthdate: data.birthdate || '',
         age: data.age || 0,
@@ -1206,6 +1245,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       disableProfileTypeFeature,
       disablePersonalPackageFeature,
       disableNutritionistPackageFeature,
+      disableProfessionalSubscriptionFeature,
       profile?.handle,
       user,
     ]

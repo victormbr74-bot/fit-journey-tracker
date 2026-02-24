@@ -263,6 +263,13 @@ export function EditProfileModal() {
             </p>
           </div>
 
+          <div className="rounded-lg border border-border/70 bg-secondary/20 p-3 text-xs text-muted-foreground space-y-1">
+            <p>Tipo de conta definido no cadastro e nao pode ser alterado por esta tela.</p>
+            {profile.profile_type !== 'client' && (
+              <p>A liberacao da area profissional depende da confirmacao da mensalidade.</p>
+            )}
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="phone">Celular</Label>
             <Input

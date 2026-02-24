@@ -141,7 +141,11 @@ export function OnboardingFlow() {
       toast.error(error.message || 'Erro ao salvar perfil. Tente novamente.');
       console.error(error);
     } else {
-      toast.success('Perfil criado com sucesso!');
+      toast.success(
+        isProfessionalAccount
+          ? 'Cadastro profissional criado. Acesso liberado apos confirmacao da mensalidade.'
+          : 'Perfil criado com sucesso!'
+      );
       navigate('/dashboard');
     }
 

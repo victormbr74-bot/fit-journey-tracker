@@ -691,6 +691,14 @@ export function ProfilePage() {
                       </div>
                     </>
                   )}
+                  {profile.profile_type !== 'client' && (
+                    <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-sm">
+                      <Lock className="h-4 w-4 text-primary" />
+                      <span className="font-medium">
+                        Mensalidade profissional {profile.professional_subscription_active ? 'ativa' : 'pendente'}
+                      </span>
+                    </div>
+                  )}
                   <EditProfileModal />
                 </div>
                 <Button
