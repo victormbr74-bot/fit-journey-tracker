@@ -13,6 +13,8 @@ import ProfilePage from "./pages/ProfilePage";
 import ClientsPage from "./pages/ClientsPage";
 import AssistantPage from "./pages/AssistantPage";
 import SocialSectionPage from "./pages/SocialSectionPage";
+import BillingPage from "./pages/BillingPage";
+import PricingPage from "./pages/PricingPage";
 import NotFound from "./pages/NotFound";
 import { ProfileProvider } from "@/context/ProfileContext";
 import { AppearanceProvider } from "@/context/AppearanceContext";
@@ -40,6 +42,8 @@ const App = () => (
                   <Route path="/running" element={<RunningPage />} />
                   <Route path="/clients" element={<ClientsPage />} />
                   <Route path="/assistant" element={<AssistantPage />} />
+                  <Route path="/billing" element={<BillingPage />} />
+                  <Route path="/pricing" element={<PricingPage />} />
                   <Route path="/friends" element={<SocialSectionPage section="friends" />} />
                   <Route path="/feed" element={<SocialSectionPage section="feed" />} />
                   <Route path="/search" element={<SocialSectionPage section="search" />} />

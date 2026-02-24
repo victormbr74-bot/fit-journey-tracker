@@ -136,3 +136,99 @@ supabase functions deploy fitchat-push
 - Log in with another account and send a message to this account.
 - Close/minimize the app and confirm push delivery.
 ```
+
+## Pix Payments (Mercado Pago + Manual Fallback)
+
+This project now includes Pix payments with:
+
+- Dynamic Pix (Mercado Pago) via Edge Functions
+- Manual Pix fallback (key/copy-paste + proof upload + admin approval)
+- Configurable pricing rules (`global`, `professional`, `client_override`)
+- Webhook confirmation that activates packages and `client_feature_flags`
+
+### Database / Migrations
+
+Apply migrations (includes tables, RLS, helper functions, storage bucket/policies):
+
+```sh
+supabase db push
+```
+
+Main objects added:
+
+- `pricing_rules`
+- `orders`
+- `manual_pix_proofs`
+- `client_feature_flags`
+- `payment_provider_settings`
+- `profiles.is_admin`
+- Storage bucket: `manual-pix-proofs`
+
+### Edge Functions to Deploy
+
+```sh
+supabase functions deploy create_pix_order
+supabase functions deploy pix_webhook
+supabase functions deploy admin_approve_manual
+```
+
+`pix_webhook` is configured in `supabase/config.toml` with `verify_jwt = false`.
+
+### Required Supabase Secrets / Env Vars (Mercado Pago)
+
+At minimum for automated Pix with Mercado Pago:
+
+```sh
+supabase secrets set PIX_PROVIDER=mercadopago
+supabase secrets set MERCADOPAGO_ACCESS_TOKEN=YOUR_MP_ACCESS_TOKEN
+supabase secrets set MERCADOPAGO_WEBHOOK_SECRET=YOUR_MP_WEBHOOK_SECRET
+supabase secrets set PIX_WEBHOOK_URL=https://<PROJECT-REF>.functions.supabase.co/pix_webhook
+```
+
+Optional:
+
+```sh
+supabase secrets set PIX_ORDER_EXPIRATION_MINUTES=30
+supabase secrets set PIX_MANUAL_KEY=your-manual-pix-key
+supabase secrets set PIX_MANUAL_COPY_PASTE=optional-manual-copy-paste
+supabase secrets set PIX_MANUAL_DISPLAY_NAME="SouFit"
+supabase secrets set PIX_MANUAL_INSTRUCTIONS="Pague e envie o comprovante para aprovacao."
+```
+
+### Mercado Pago Webhook
+
+Configure the webhook/notifications URL in Mercado Pago to point to:
+
+```txt
+https://<PROJECT-REF>.functions.supabase.co/pix_webhook?provider=mercadopago
+```
+
+Notes:
+
+- The function validates Mercado Pago `x-signature` using `MERCADOPAGO_WEBHOOK_SECRET`.
+- Only webhook confirmation marks automated orders as `paid`.
+- The webhook fetches payment details from Mercado Pago and applies effects idempotently.
+
+### Manual Pix Fallback
+
+If the provider is not configured (or `PIX_PROVIDER=manual`):
+
+- `create_pix_order` creates `orders.provider = 'manual'` with `status = 'manual_review'`
+- Client uploads proof to `manual-pix-proofs`
+- Admin approves/rejects in `/pricing` (Admin tab)
+- Approval calls `admin_approve_manual` and applies package/feature unlocks
+
+### Admin Setup
+
+Grant admin access by setting `profiles.is_admin = true` for the target user:
+
+```sql
+update public.profiles
+set is_admin = true
+where email = 'admin@example.com';
+```
+
+### Frontend Routes
+
+- `/billing`: client payment/subscription page (generate Pix, copy-paste, proof upload, status refresh)
+- `/pricing`: professional pricing + admin pricing/provider/proof approval

@@ -33,6 +33,7 @@ export interface UserProfile {
   handle: string;
   email: string;
   profile_type: ProfileType;
+  is_admin?: boolean;
   has_personal_package: boolean;
   has_nutritionist_package: boolean;
   professional_subscription_active: boolean;

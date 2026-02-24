@@ -5,6 +5,7 @@ import {
   Bot,
   Dumbbell,
   Home,
+  Tags,
   LogOut,
   MapPin,
   Menu,
@@ -15,6 +16,7 @@ import {
   User,
   UsersRound,
   Utensils,
+  WalletCards,
 } from 'lucide-react';
 
 import { useAuth } from '@/hooks/useAuth';
@@ -40,9 +42,11 @@ const secondaryNavItems = [
   { path: '/running', label: 'Corrida', icon: MapPin },
   { path: '/clans', label: 'CLA', icon: Trophy },
   { path: '/assistant', label: 'Personal', icon: Bot },
+  { path: '/billing', label: 'Pagamentos', icon: WalletCards },
 ];
 
 const professionalNavItem = { path: '/clients', label: 'Clientes', icon: UsersRound };
+const pricingNavItem = { path: '/pricing', label: 'Precificacao', icon: Tags };
 
 const isMissingSocialGlobalStateError = (
   error: { code?: string; message?: string; details?: string } | null | undefined
@@ -86,12 +90,20 @@ export function Sidebar() {
     [profile?.profile_type]
   );
   const hasProfessionalSubscription = Boolean(profile?.professional_subscription_active);
+  const isAdmin = Boolean(profile?.is_admin);
+  const privilegedNavItems = useMemo(() => {
+    const items: Array<typeof professionalNavItem> = [];
+    if (isProfessionalAccount && hasProfessionalSubscription) {
+      items.push(professionalNavItem);
+    }
+    if (isProfessionalAccount || isAdmin) {
+      items.push(pricingNavItem);
+    }
+    return items;
+  }, [hasProfessionalSubscription, isAdmin, isProfessionalAccount]);
   const visibleSecondaryNavItems = useMemo(
-    () =>
-      isProfessionalAccount && hasProfessionalSubscription
-        ? [professionalNavItem, ...secondaryNavItems]
-        : secondaryNavItems,
-    [hasProfessionalSubscription, isProfessionalAccount]
+    () => [...privilegedNavItems, ...secondaryNavItems],
+    [privilegedNavItems]
   );
   const allNavItems = useMemo(
     () => [...primaryNavItems, ...visibleSecondaryNavItems, { path: '/profile', label: 'Perfil', icon: User }],

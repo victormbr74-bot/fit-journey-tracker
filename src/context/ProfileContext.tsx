@@ -464,6 +464,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
         profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
+        is_admin: Boolean((data as { is_admin?: boolean | null }).is_admin),
         has_personal_package: Boolean(data.has_personal_package),
         has_nutritionist_package: Boolean(data.has_nutritionist_package),
         professional_subscription_active: Boolean(data.professional_subscription_active),
@@ -1054,6 +1055,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         handle: isValidHandle(data.handle || '') ? data.handle : selectedHandle,
         email: data.email,
         profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
+        is_admin: Boolean((data as { is_admin?: boolean | null }).is_admin),
         has_personal_package: Boolean(data.has_personal_package),
         has_nutritionist_package: Boolean(data.has_nutritionist_package),
         professional_subscription_active: Boolean(data.professional_subscription_active),
@@ -1133,6 +1135,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
         // Account type is chosen during registration/onboarding and cannot be changed in profile edit.
         delete payload.profile_type;
+        // Admin flag must never be client-editable.
+        delete payload.is_admin;
         // Subscription activation must be controlled by backend/payment flow.
         delete payload.professional_subscription_active;
 
@@ -1217,6 +1221,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         handle: isValidHandle(data.handle || '') ? data.handle : toHandle(data.name || data.email),
         email: data.email,
         profile_type: isProfileType(data.profile_type) ? data.profile_type : 'client',
+        is_admin: Boolean((data as { is_admin?: boolean | null }).is_admin),
         has_personal_package: Boolean(data.has_personal_package),
         has_nutritionist_package: Boolean(data.has_nutritionist_package),
         professional_subscription_active: Boolean(data.professional_subscription_active),
