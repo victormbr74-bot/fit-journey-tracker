@@ -482,8 +482,8 @@ export function ProfilePage() {
       const friendRequests = Array.isArray(data?.friend_requests) ? data.friend_requests : [];
       const chatEvents = Array.isArray(data?.chat_events) ? data.chat_events : [];
 
-      const { error: upsertError } = await supabase
-        .from('social_global_state')
+      const { error: upsertError } = await (supabase
+        .from('social_global_state') as any)
         .upsert(
           {
             id: SOCIAL_GLOBAL_STATE_ID,

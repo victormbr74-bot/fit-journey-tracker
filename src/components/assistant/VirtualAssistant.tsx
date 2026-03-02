@@ -337,7 +337,7 @@ const extractTextFromPdfFile = async (file: File): Promise<string> => {
     data: new Uint8Array(fileBuffer),
     disableWorker: true,
     isEvalSupported: false,
-  });
+  } as any);
   const pdfDocument = await loadingTask.promise;
   const maxPages = Math.min(pdfDocument.numPages, 25);
   const pageTexts: string[] = [];
@@ -1333,7 +1333,7 @@ const buildRecentHistory = (): string =>
         weight: profile.weight,
         height: profile.height,
         age: profile.age,
-        goal: finalGoal,
+        goal: finalGoal as any,
       });
 
       window.localStorage.setItem(`${DIET_PLAN_STORAGE_PREFIX}${profile.id}`, JSON.stringify(plan));
