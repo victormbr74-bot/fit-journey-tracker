@@ -56,39 +56,6 @@ export type Database = {
         }
         Relationships: []
       }
-      chat_push_subscriptions: {
-        Row: {
-          auth: string
-          created_at: string
-          endpoint: string
-          id: string
-          p256dh: string
-          profile_id: string
-          updated_at: string
-          user_agent: string | null
-        }
-        Insert: {
-          auth: string
-          created_at?: string
-          endpoint: string
-          id?: string
-          p256dh: string
-          profile_id: string
-          updated_at?: string
-          user_agent?: string | null
-        }
-        Update: {
-          auth?: string
-          created_at?: string
-          endpoint?: string
-          id?: string
-          p256dh?: string
-          profile_id?: string
-          updated_at?: string
-          user_agent?: string | null
-        }
-        Relationships: []
-      }
       client_diet_plans: {
         Row: {
           client_id: string
@@ -124,6 +91,51 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      client_feature_flags: {
+        Row: {
+          client_id: string
+          created_at: string
+          enabled: boolean
+          feature_key: string
+          id: string
+          source_order_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          enabled?: boolean
+          feature_key: string
+          id?: string
+          source_order_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          enabled?: boolean
+          feature_key?: string
+          id?: string
+          source_order_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_feature_flags_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_feature_flags_source_order_id_fkey"
+            columns: ["source_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       client_workout_plans: {
         Row: {
@@ -161,6 +173,235 @@ export type Database = {
         }
         Relationships: []
       }
+      manual_pix_proofs: {
+        Row: {
+          created_at: string
+          file_path: string
+          id: string
+          order_id: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          uploaded_by: string
+        }
+        Insert: {
+          created_at?: string
+          file_path: string
+          id?: string
+          order_id: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          uploaded_by: string
+        }
+        Update: {
+          created_at?: string
+          file_path?: string
+          id?: string
+          order_id?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manual_pix_proofs_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manual_pix_proofs_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manual_pix_proofs_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          amount_cents: number
+          client_id: string
+          created_at: string
+          currency: string
+          expires_at: string | null
+          id: string
+          paid_at: string | null
+          pix_copy_paste: string | null
+          pix_qr_image_url: string | null
+          product_key: string
+          professional_id: string | null
+          provider: string
+          provider_reference: string | null
+          status: string
+        }
+        Insert: {
+          amount_cents: number
+          client_id: string
+          created_at?: string
+          currency?: string
+          expires_at?: string | null
+          id?: string
+          paid_at?: string | null
+          pix_copy_paste?: string | null
+          pix_qr_image_url?: string | null
+          product_key: string
+          professional_id?: string | null
+          provider: string
+          provider_reference?: string | null
+          status: string
+        }
+        Update: {
+          amount_cents?: number
+          client_id?: string
+          created_at?: string
+          currency?: string
+          expires_at?: string | null
+          id?: string
+          paid_at?: string | null
+          pix_copy_paste?: string | null
+          pix_qr_image_url?: string | null
+          product_key?: string
+          professional_id?: string | null
+          provider?: string
+          provider_reference?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_professional_id_fkey"
+            columns: ["professional_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_provider_settings: {
+        Row: {
+          active_provider: string
+          id: boolean
+          manual_pix_copy_paste: string | null
+          manual_pix_display_name: string | null
+          manual_pix_instructions: string | null
+          manual_pix_key: string | null
+          updated_at: string
+        }
+        Insert: {
+          active_provider?: string
+          id?: boolean
+          manual_pix_copy_paste?: string | null
+          manual_pix_display_name?: string | null
+          manual_pix_instructions?: string | null
+          manual_pix_key?: string | null
+          updated_at?: string
+        }
+        Update: {
+          active_provider?: string
+          id?: boolean
+          manual_pix_copy_paste?: string | null
+          manual_pix_display_name?: string | null
+          manual_pix_instructions?: string | null
+          manual_pix_key?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      pricing_rules: {
+        Row: {
+          active: boolean
+          client_id: string | null
+          currency: string
+          id: string
+          owner_id: string | null
+          price_cents: number
+          product_key: string
+          scope: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          client_id?: string | null
+          currency?: string
+          id?: string
+          owner_id?: string | null
+          price_cents: number
+          product_key: string
+          scope: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          client_id?: string | null
+          currency?: string
+          id?: string
+          owner_id?: string | null
+          price_cents?: number
+          product_key?: string
+          scope?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pricing_rules_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pricing_rules_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      professional_client_links: {
+        Row: {
+          client_id: string
+          created_at: string
+          id: string
+          professional_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          id?: string
+          professional_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          id?: string
+          professional_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           age: number | null
@@ -168,17 +409,16 @@ export type Database = {
           created_at: string | null
           email: string
           goal: string | null
-          has_nutritionist_package: boolean
-          has_personal_package: boolean
           handle: string
           height: number | null
           id: string
+          is_admin: boolean
           muscle_groups: string[] | null
           name: string
           phone: string | null
-          profile_type: string
-          professional_subscription_active: boolean
           points: number | null
+          professional_subscription_active: boolean
+          profile_type: string
           spotify_playlist: string | null
           training_frequency: number | null
           updated_at: string | null
@@ -191,17 +431,16 @@ export type Database = {
           created_at?: string | null
           email: string
           goal?: string | null
-          has_nutritionist_package?: boolean
-          has_personal_package?: boolean
           handle: string
           height?: number | null
           id: string
+          is_admin?: boolean
           muscle_groups?: string[] | null
           name: string
           phone?: string | null
-          profile_type?: string
-          professional_subscription_active?: boolean
           points?: number | null
+          professional_subscription_active?: boolean
+          profile_type?: string
           spotify_playlist?: string | null
           training_frequency?: number | null
           updated_at?: string | null
@@ -214,55 +453,21 @@ export type Database = {
           created_at?: string | null
           email?: string
           goal?: string | null
-          has_nutritionist_package?: boolean
-          has_personal_package?: boolean
           handle?: string
           height?: number | null
           id?: string
+          is_admin?: boolean
           muscle_groups?: string[] | null
           name?: string
           phone?: string | null
-          profile_type?: string
-          professional_subscription_active?: boolean
           points?: number | null
+          professional_subscription_active?: boolean
+          profile_type?: string
           spotify_playlist?: string | null
           training_frequency?: number | null
           updated_at?: string | null
           weight?: number | null
           youtube_playlist?: string | null
-        }
-        Relationships: []
-      }
-      social_global_state: {
-        Row: {
-          chat_events: Json
-          created_at: string
-          feed_posts: Json
-          friend_requests: Json
-          id: boolean
-          stories: Json
-          updated_at: string
-          updated_by: string | null
-        }
-        Insert: {
-          chat_events?: Json
-          created_at?: string
-          feed_posts?: Json
-          friend_requests?: Json
-          id?: boolean
-          stories?: Json
-          updated_at?: string
-          updated_by?: string | null
-        }
-        Update: {
-          chat_events?: Json
-          created_at?: string
-          feed_posts?: Json
-          friend_requests?: Json
-          id?: boolean
-          stories?: Json
-          updated_at?: string
-          updated_by?: string | null
         }
         Relationships: []
       }
@@ -299,30 +504,36 @@ export type Database = {
         }
         Relationships: []
       }
-      professional_client_links: {
+      social_global_state: {
         Row: {
-          client_id: string
+          chat_events: Json
           created_at: string
-          id: string
-          professional_id: string
-          status: string
+          feed_posts: Json
+          friend_requests: Json
+          id: boolean
+          stories: Json
           updated_at: string
+          updated_by: string | null
         }
         Insert: {
-          client_id: string
+          chat_events?: Json
           created_at?: string
-          id?: string
-          professional_id: string
-          status?: string
+          feed_posts?: Json
+          friend_requests?: Json
+          id?: boolean
+          stories?: Json
           updated_at?: string
+          updated_by?: string | null
         }
         Update: {
-          client_id?: string
+          chat_events?: Json
           created_at?: string
-          id?: string
-          professional_id?: string
-          status?: string
+          feed_posts?: Json
+          friend_requests?: Json
+          id?: boolean
+          stories?: Json
           updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }
@@ -396,27 +607,42 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      get_profile_public_summary: {
-        Args: { target_profile_id?: string | null; target_handle?: string | null }
+      get_effective_product_price: {
+        Args: { p_product_key: string; p_professional_id?: string }
         Returns: {
-          goal: string | null
-          handle: string
-          name: string
-          points: number
-          profile_id: string
+          currency: string
+          price_cents: number
+          pricing_rule_id: string
+          product_key: string
+          source_client_id: string
+          source_owner_id: string
+          source_scope: string
         }[]
       }
-      has_professional_client_link: {
-        Args: { professional_uuid: string; client_uuid: string }
+      has_active_professional_subscription: {
+        Args: { target_profile_id?: string }
         Returns: boolean
       }
-      is_professional: {
-        Args: { target_profile_id?: string | null }
+      has_professional_client_link: {
+        Args: { client_uuid: string; professional_uuid: string }
+        Returns: boolean
+      }
+      is_admin: { Args: { target_profile_id?: string }; Returns: boolean }
+      is_nutritionist: {
+        Args: { target_profile_id?: string }
         Returns: boolean
       }
       is_own_profile: { Args: { profile_id: string }; Returns: boolean }
+      is_personal_trainer: {
+        Args: { target_profile_id?: string }
+        Returns: boolean
+      }
+      is_professional: {
+        Args: { target_profile_id?: string }
+        Returns: boolean
+      }
       is_profile_handle_available: {
-        Args: { handle_input: string; exclude_profile_id?: string | null }
+        Args: { exclude_profile_id?: string; handle_input: string }
         Returns: boolean
       }
       link_client_by_handle: {
@@ -428,17 +654,38 @@ export type Database = {
           link_id: string
         }[]
       }
-      normalize_profile_handle: { Args: { input_text: string }; Returns: string }
-      normalize_profile_phone: { Args: { input_text: string }; Returns: string }
-      reserve_unique_profile_handle: {
-        Args: { seed_input: string; exclude_profile_id?: string | null }
+      mark_order_paid_and_apply_effects: {
+        Args: { p_order_id: string; p_paid_at?: string }
+        Returns: boolean
+      }
+      normalize_profile_handle: {
+        Args: { input_text: string }
         Returns: string
       }
+      reserve_unique_profile_handle: {
+        Args: { exclude_profile_id?: string; seed_input: string }
+        Returns: string
+      }
+      resolve_order_price: {
+        Args: {
+          p_client_id: string
+          p_product_key: string
+          p_professional_id?: string
+        }
+        Returns: {
+          currency: string
+          price_cents: number
+          pricing_rule_id: string
+          source_client_id: string
+          source_owner_id: string
+          source_scope: string
+        }[]
+      }
       search_client_profiles: {
-        Args: { query_text: string; limit_count?: number | null }
+        Args: { limit_count?: number; query_text: string }
         Returns: {
           already_linked: boolean
-          goal: string | null
+          goal: string
           handle: string
           name: string
           profile_id: string
@@ -446,30 +693,25 @@ export type Database = {
       }
       search_profiles_by_handle: {
         Args: {
+          exclude_profile_id?: string
+          limit_count?: number
           query_text: string
-          limit_count?: number | null
-          exclude_profile_id?: string | null
         }
         Returns: {
-          goal: string | null
+          goal: string
           handle: string
           name: string
           profile_id: string
         }[]
       }
-      search_profiles_by_phone: {
+      upsert_client_feature_flag: {
         Args: {
-          phones_input: string[]
-          limit_count?: number | null
-          exclude_profile_id?: string | null
+          p_client_id: string
+          p_enabled?: boolean
+          p_feature_key: string
+          p_source_order_id?: string
         }
-        Returns: {
-          goal: string | null
-          handle: string
-          name: string
-          phone: string | null
-          profile_id: string
-        }[]
+        Returns: undefined
       }
     }
     Enums: {
