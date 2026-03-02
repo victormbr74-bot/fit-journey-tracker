@@ -238,19 +238,65 @@ export function AuthForm() {
           )}
         </div>
 
-        <div className="mt-8 grid grid-cols-3 gap-4 text-center">
-          <div className="p-3">
-            <span className="text-2xl mb-2 block">??</span>
-            <p className="text-xs text-muted-foreground">Treinos Personalizados</p>
+        {/* Pricing Plans Section */}
+        <div className="mt-10 space-y-4">
+          <h2 className="text-lg font-bold text-center">Nossos Planos</h2>
+
+          {/* Free Plan */}
+          <div className="glass-card p-5 border border-border/50">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-bold text-base">Plano Free</h3>
+              <span className="text-primary font-black text-lg">Grátis</span>
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">
+              Acompanhamento de peso e métricas básicas.
+            </p>
+            <ul className="text-xs text-muted-foreground space-y-1">
+              <li>✅ Registro de peso</li>
+              <li>✅ Dashboard com IMC</li>
+              <li>✅ Desafios diários</li>
+              <li className="text-muted-foreground/50">🔒 Treinos personalizados (requer Personal)</li>
+              <li className="text-muted-foreground/50">🔒 Dieta personalizada (requer Nutricionista)</li>
+            </ul>
           </div>
-          <div className="p-3">
-            <span className="text-2xl mb-2 block">??</span>
-            <p className="text-xs text-muted-foreground">Rastreie Corridas</p>
+
+          {/* Personal Plan */}
+          <div className="glass-card p-5 border border-primary/30 bg-primary/5">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-bold text-base">Plano Personal</h3>
+              <span className="text-primary font-black text-lg">R$ 100,00</span>
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">
+              Para Personal Trainers. Cadastre-se, ative seu plano e gerencie treinos dos seus clientes.
+            </p>
+            <ul className="text-xs text-muted-foreground space-y-1">
+              <li>✅ Tudo do plano Free</li>
+              <li>✅ Cadastro profissional</li>
+              <li>✅ Gerenciar clientes</li>
+              <li>✅ Criar e atribuir treinos personalizados</li>
+            </ul>
           </div>
-          <div className="p-3">
-            <span className="text-2xl mb-2 block">??</span>
-            <p className="text-xs text-muted-foreground">Desafios Diarios</p>
+
+          {/* Nutritionist Plan */}
+          <div className="glass-card p-5 border border-primary/30 bg-primary/5">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-bold text-base">Plano Nutricionista</h3>
+              <span className="text-primary font-black text-lg">R$ 100,00</span>
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">
+              Para Nutricionistas. Cadastre-se, ative seu plano e crie dietas para seus clientes.
+            </p>
+            <ul className="text-xs text-muted-foreground space-y-1">
+              <li>✅ Tudo do plano Free</li>
+              <li>✅ Cadastro profissional</li>
+              <li>✅ Gerenciar clientes</li>
+              <li>✅ Criar e atribuir dietas personalizadas</li>
+            </ul>
           </div>
+
+          <p className="text-xs text-center text-muted-foreground pt-2">
+            Clientes comuns acessam treinos e dietas quando um profissional libera o acesso.
+          </p>
         </div>
       </div>
     </div>
