@@ -410,6 +410,8 @@ export type Database = {
           email: string
           goal: string | null
           handle: string
+          has_nutritionist_package: boolean
+          has_personal_package: boolean
           height: number | null
           id: string
           is_admin: boolean
@@ -432,6 +434,8 @@ export type Database = {
           email: string
           goal?: string | null
           handle: string
+          has_nutritionist_package?: boolean
+          has_personal_package?: boolean
           height?: number | null
           id: string
           is_admin?: boolean
@@ -454,6 +458,8 @@ export type Database = {
           email?: string
           goal?: string | null
           handle?: string
+          has_nutritionist_package?: boolean
+          has_personal_package?: boolean
           height?: number | null
           id?: string
           is_admin?: boolean

@@ -152,7 +152,7 @@ const extractTextFromPdfFile = async (file: File): Promise<string> => {
     data: new Uint8Array(fileBuffer),
     disableWorker: true,
     isEvalSupported: false,
-  });
+  } as any);
   const pdfDocument = await loadingTask.promise;
   const maxPages = Math.min(pdfDocument.numPages, 25);
   const pageTexts: string[] = [];

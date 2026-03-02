@@ -948,8 +948,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
       };
 
       const upsertWithPayload = (payload: Record<string, unknown>) =>
-        supabase
-          .from('profiles')
+        (supabase
+          .from('profiles') as any)
           .upsert(payload, { onConflict: 'id' })
           .select()
           .single();

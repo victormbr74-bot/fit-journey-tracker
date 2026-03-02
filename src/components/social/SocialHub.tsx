@@ -1155,7 +1155,7 @@ const sanitizeClans = (
       const rawClan = clan as Partial<SocialClan>;
       const memberIds = Array.isArray(rawClan.memberIds)
         ? Array.from(
-            new Set(rawClan.memberIds.filter((memberId): memberId is string => typeof memberId === 'string' && memberId))
+            new Set(rawClan.memberIds.filter((memberId): memberId is string => typeof memberId === 'string' && !!memberId))
           )
         : [];
       const createdAt = isValidIsoDate(rawClan.createdAt) ? rawClan.createdAt : new Date().toISOString();
@@ -1531,10 +1531,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
           await registration.showNotification(title, {
             body: description,
             tag: `fitchat-${Date.now()}`,
-            renotify: true,
             icon: APP_NOTIFICATION_ICON,
             badge: APP_NOTIFICATION_BADGE,
-          });
+          } as NotificationOptions);
           return;
         }
       }
@@ -1657,9 +1656,9 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       }
 
       const registration = await navigator.serviceWorker.ready;
-      let subscription = await registration.pushManager.getSubscription();
+      let subscription = await (registration as any).pushManager.getSubscription();
       if (!subscription) {
-        subscription = await registration.pushManager.subscribe({
+        subscription = await (registration as any).pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: decodeBase64UrlToUint8Array(FIT_CHAT_WEB_PUSH_PUBLIC_KEY),
         });
@@ -1672,7 +1671,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
         throw new Error('Assinatura de push invalida.');
       }
 
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('chat_push_subscriptions')
         .upsert(
           {
@@ -2040,8 +2039,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
       if (!data) {
         const emptySnapshot = createSanitizedGlobalSnapshot([], [], [], []);
-        const { error: upsertError } = await supabase
-          .from('social_global_state')
+        const { error: upsertError } = await (supabase
+          .from('social_global_state') as any)
           .upsert(
             {
               id: SOCIAL_GLOBAL_STATE_ID,
@@ -2072,10 +2071,10 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       }
 
       const nextSnapshot = createSanitizedGlobalSnapshot(
-        Array.isArray(data.feed_posts) ? (data.feed_posts as SocialFeedPost[]) : [],
-        Array.isArray(data.stories) ? (data.stories as SocialStory[]) : [],
-        Array.isArray(data.friend_requests) ? (data.friend_requests as SocialFriendRequest[]) : [],
-        Array.isArray(data.chat_events) ? (data.chat_events as SocialGlobalChatEvent[]) : []
+        Array.isArray(data.feed_posts) ? (data.feed_posts as unknown as SocialFeedPost[]) : [],
+        Array.isArray(data.stories) ? (data.stories as unknown as SocialStory[]) : [],
+        Array.isArray(data.friend_requests) ? (data.friend_requests as unknown as SocialFriendRequest[]) : [],
+        Array.isArray(data.chat_events) ? (data.chat_events as unknown as SocialGlobalChatEvent[]) : []
       );
 
       const nextHash = getGlobalSnapshotHash(nextSnapshot);
@@ -2154,8 +2153,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
     let canceled = false;
     const syncTimer = window.setTimeout(async () => {
-      const { error } = await supabase
-        .from('social_global_state')
+      const { error } = await (supabase
+        .from('social_global_state') as any)
         .upsert(
           {
             id: SOCIAL_GLOBAL_STATE_ID,
@@ -2214,8 +2213,8 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
       const parsedFriends = Array.isArray(parsed.friends)
         ? parsed.friends
             .filter(
-              (friend): friend is Partial<SocialFriend> =>
-                Boolean(friend) && typeof friend === 'object'
+              (friend): friend is SocialFriend =>
+                Boolean(friend) && typeof friend === 'object' && typeof (friend as any).id === 'string'
             )
             .map((friend, index) => {
               const fallbackName = typeof friend.name === 'string' && friend.name.trim()
@@ -2623,14 +2622,14 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     );
     if (!normalizedPhones.length) return [];
 
-    const { data, error } = await supabase.rpc('search_profiles_by_phone', {
+    const { data, error } = await (supabase as any).rpc('search_profiles_by_phone', {
       phones_input: normalizedPhones,
       limit_count: limitCount,
       exclude_profile_id: profile.id,
     });
 
     if (!error && Array.isArray(data)) {
-      return mapRemotePhoneProfilesToDiscoverable(data, normalizedProfileHandle);
+      return mapRemotePhoneProfilesToDiscoverable(data as RemotePhoneProfileSearchResult[], normalizedProfileHandle);
     }
 
     if (error && !isMissingRpcFunctionError(error)) {
@@ -2671,7 +2670,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     const normalizedHandle = normalizeHandle(friend.handle || friend.name || '');
     const targetHandle = normalizedHandle ? toHandle(normalizedHandle) : null;
 
-    const { data, error } = await supabase.rpc('get_profile_public_summary', {
+    const { data, error } = await (supabase as any).rpc('get_profile_public_summary', {
       target_profile_id: friend.profileId || null,
       target_handle: targetHandle,
     });
@@ -5053,7 +5052,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     `${story.caption || 'Story compartilhada'}\n\nStory de ${story.authorHandle} no SouFit\n#SouFit #Story`;
 
   const handleShareOnWhatsApp = (item: SocialFeedPost | SocialStory, type: 'post' | 'story') => {
-    const text = type === 'post' ? buildPostShareText(item) : buildStoryShareText(item);
+    const text = type === 'post' ? buildPostShareText(item as SocialFeedPost) : buildStoryShareText(item as SocialStory);
     const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
     const popup = window.open(url, '_blank', 'noopener,noreferrer');
     if (!popup) {
@@ -5072,7 +5071,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
     item: SocialFeedPost | SocialStory,
     type: 'post' | 'story'
   ) => {
-    const text = type === 'post' ? buildPostShareText(item) : buildStoryShareText(item);
+    const text = type === 'post' ? buildPostShareText(item as SocialFeedPost) : buildStoryShareText(item as SocialStory);
     if (navigator.share) {
       try {
         const file = await dataUrlToFile(
@@ -5119,7 +5118,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
 
   const handleCopyShareText = async (item: SocialFeedPost | SocialStory, type: 'post' | 'story') => {
     try {
-      const text = type === 'post' ? buildPostShareText(item) : buildStoryShareText(item);
+      const text = type === 'post' ? buildPostShareText(item as SocialFeedPost) : buildStoryShareText(item as SocialStory);
       await navigator.clipboard.writeText(text);
       toast.success(type === 'post' ? 'Texto do post copiado.' : 'Texto da story copiado.');
     } catch (error) {
@@ -7042,7 +7041,7 @@ export function SocialHub({ profile, defaultSection = 'friends', showSectionTabs
                                           'h-3.5 w-3.5',
                                           receiptStatus === 'read' ? 'text-primary' : 'text-muted-foreground'
                                         )}
-                                        title={receiptStatus === 'read' ? 'Mensagem lida' : 'Mensagem recebida'}
+                                        aria-label={receiptStatus === 'read' ? 'Mensagem lida' : 'Mensagem recebida'}
                                       />
                                     )}
                                   </div>

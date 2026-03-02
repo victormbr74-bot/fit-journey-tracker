@@ -106,10 +106,10 @@ export function ProfessionalWorkspace() {
     }
 
     const clientIds = linkRows.map((link) => link.client_id);
-    const { data: clientsData, error: clientsError } = await supabase
+    const { data: clientsData, error: clientsError } = await (supabase
       .from('profiles')
       .select('id, name, handle, email, goal, weight, height, age, has_personal_package, has_nutritionist_package')
-      .in('id', clientIds);
+      .in('id', clientIds) as any);
 
     if (clientsError) {
       console.error('Erro ao carregar perfis dos clientes:', clientsError);
@@ -119,10 +119,10 @@ export function ProfessionalWorkspace() {
       return;
     }
 
-    const clientsById = new Map((clientsData || []).map((client) => [client.id, client]));
+    const clientsById = new Map((clientsData || []).map((client: any) => [client.id, client]));
     const mergedClients: ManagedClient[] = linkRows
       .map((link) => {
-        const client = clientsById.get(link.client_id);
+        const client = clientsById.get(link.client_id) as any;
         if (!client) return null;
         return {
           linkId: link.id,
@@ -252,7 +252,7 @@ export function ProfessionalWorkspace() {
       return;
     }
 
-    const { error } = await supabase.from('client_workout_plans').insert({
+    const { error } = await (supabase.from('client_workout_plans') as any).insert({
       professional_id: profile.id,
       client_id: client.id,
       title,
@@ -308,7 +308,7 @@ export function ProfessionalWorkspace() {
       return;
     }
 
-    const { error } = await supabase.from('client_diet_plans').insert({
+    const { error } = await (supabase.from('client_diet_plans') as any).insert({
       professional_id: profile.id,
       client_id: client.id,
       title,

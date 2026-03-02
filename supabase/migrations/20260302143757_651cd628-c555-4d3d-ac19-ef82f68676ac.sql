@@ -1,0 +1,6 @@
+
+ALTER TABLE public.profiles
+ADD COLUMN IF NOT EXISTS has_personal_package BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE public.profiles
+ADD COLUMN IF NOT EXISTS has_nutritionist_package BOOLEAN NOT NULL DEFAULT FALSE;
